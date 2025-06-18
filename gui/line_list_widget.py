@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox, QListWidget, QListWidgetItem
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox, QListWidget, QListWidgetItem, QSizePolicy
 from PyQt5.QtCore import pyqtSignal, Qt
 
 class LineListWidget(QWidget):
@@ -13,8 +13,12 @@ class LineListWidget(QWidget):
         self.list_widget = QListWidget()
         self.vbox.addWidget(self.list_widget)
         self.line_items = []  # Store (widget, QListWidgetItem)
-        self.setContentsMargins(0, 0, 0, 0)
+        self.vbox.setContentsMargins(0, 0, 0, 0)
         self.list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self.list_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(0, 0)
+        self.vbox.setStretch(0, 0)
 
     def add_line(self, label, visible=True):
         widget = QWidget()

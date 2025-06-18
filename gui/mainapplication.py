@@ -80,7 +80,7 @@ class MainWindow(QMainWindow):
 
         # Plotted lines list dock
         self.line_list_widget = LineListWidget()
-        self.line_list_widget.setMaximumHeight(120)
+        #self.line_list_widget.setMaximumHeight(120)
         self.line_list_widget.showHideToggled.connect(self.toggle_line_visibility)
         self.line_list_widget.removeRequested.connect(self.remove_plot_line)
         self.line_list_widget.editRequested.connect(self.edit_line_params)
