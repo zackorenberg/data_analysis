@@ -98,8 +98,8 @@ class ParamWidget(QDockWidget):
         #export_btn.setMaximumWidth(16777215)
         main_widget.setLayout(layout)
         self.setWidget(main_widget)
-
-    def apply(self):
+    
+    def export_params(self):
         params = {
             'title': self.title_edit.text().strip(),
             'xlabel': self.xlabel_edit.text().strip(),
@@ -111,6 +111,10 @@ class ParamWidget(QDockWidget):
             'xticks': self.xticks_edit.text().strip(),
             'yticks': self.yticks_edit.text().strip(),
         }
+        return params
+
+    def apply(self):
+        params = self.export_params()
         self.paramsSelected.emit(params)
 
     def reset(self):

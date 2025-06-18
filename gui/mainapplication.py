@@ -11,6 +11,7 @@ from gui.param_widget import ParamWidget
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 import matplotlib.pyplot as plt
 import numpy as np
+import json
 
 
 class MainWindow(QMainWindow):
@@ -19,6 +20,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Corbino Analysis GUI")
         self.setGeometry(100, 100, 1200, 800)
         
+        self.statusBar = self.statusBar()
 
         self._create_menubar()
 
@@ -128,6 +130,14 @@ class MainWindow(QMainWindow):
         export_action.triggered.connect(self.export_to_matplotlib)
         file_menu.addAction(export_action)
 
+        # Add Export/Import Plot Config actions
+        export_cfg_action = QAction("Export Plot Configuration", self)
+        export_cfg_action.triggered.connect(self.export_plot_config)
+        file_menu.addAction(export_cfg_action)
+        import_cfg_action = QAction("Import Plot Configuration", self)
+        import_cfg_action.triggered.connect(self.import_plot_config)
+        file_menu.addAction(import_cfg_action)
+
     def save_plot(self):
         options = QFileDialog.Options()
         # Ensure 'plots' directory exists
@@ -173,6 +183,7 @@ class MainWindow(QMainWindow):
         dialog.exec_()
 
     def add_plot_line(self, file_path, df, params, comments):
+        self.set_status_message("Adding plot line...")
         x = df[params['x']]
         y = df[params['y']]
         # Calculation for x
@@ -237,6 +248,7 @@ class MainWindow(QMainWindow):
         item = QListWidgetItem(f"{os.path.basename(file_path)}: {params['y']} vs {params['x']}")
         self.line_list.addItem(item)
         item.setData(1000, len(self.plotted_lines) - 1)
+        self.clear_status_message()
 
     def edit_line_params(self, item):
         idx = item.data(1000)
@@ -255,6 +267,7 @@ class MainWindow(QMainWindow):
         dialog.exec_()
 
     def update_plot_line(self, file_path, df, params, idx):
+        self.set_status_message("Updating plot line...")
         x = df[params['x']]
         y = df[params['y']]
         # Calculation for x
@@ -309,6 +322,7 @@ class MainWindow(QMainWindow):
         self.canvas.apply_plot_params(self.global_params)
         self.canvas.figure.tight_layout()
         self.canvas.draw()
+        self.clear_status_message()
         
 
     def refresh_plot(self):
@@ -316,17 +330,20 @@ class MainWindow(QMainWindow):
         pass
 
     def apply_global_plot_params(self, params):
+        self.set_status_message("Applying global plot parameters...")
         self.global_params = params
         self.canvas.apply_plot_params(params)
         self.canvas.figure.tight_layout()
         self.canvas.draw()
         self.plot_dock.raise_() # Show plot now
+        self.clear_status_message()
 
     def update_param_widget_fields_from_plot(self):
         params = self.canvas.get_plot_params()
         self.param_widget.update_fields_from_params(params)
 
     def reset_plot_and_params(self):
+        self.set_status_message("Resetting plot and parameters...")
         # Clear the axes
         self.canvas.axes.clear()
         # Replot all lines from self.plotted_lines
@@ -401,8 +418,11 @@ class MainWindow(QMainWindow):
         self.update_param_widget_fields_from_plot()
         
         self.plot_dock.raise_()
+        self.clear_status_message()
 
     def export_to_matplotlib(self):
+        self.set_status_message("Exporting plot to matplotlib window...")
+
         w, ok1 = QInputDialog.getDouble(self, "Figure Width", "Width (inches):", 8.0, 1.0, 30.0, 1)
         h, ok2 = QInputDialog.getDouble(self, "Figure Height", "Height (inches):", 6.0, 1.0, 30.0, 1)
         if not (ok1 and ok2):
@@ -492,8 +512,77 @@ class MainWindow(QMainWindow):
                 pass
         fig.tight_layout()
         plt.show()
+        self.clear_status_message()
+
+    def export_plot_config(self):
+        self.set_status_message("Exporting plot configuration...")
+        from PyQt5.QtWidgets import QFileDialog
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Plot Configuration", "plot_config.json", "JSON Files (*.json)")
+        if not file_path:
+            self.set_status_message("")
+            return
+        # Prepare config dict
+        config = {
+            'plotted_lines': [
+                {
+                    'file': line['file'],
+                    'params': line['params'],
+                    'comments': line.get('comments', [])
+                } for line in self.plotted_lines
+            ],
+            'global_params': self.global_params
+        }
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(config, f, indent=2)
+            self.set_status_message(f"Exported plot configuration to {file_path}", 5000)
+        except Exception as e:
+            self.set_status_message(f"Export failed: {e}", 5000)
+
+    def import_plot_config(self):
+        self.set_status_message("Importing plot configuration...")
+        from PyQt5.QtWidgets import QFileDialog
+        file_path, _ = QFileDialog.getOpenFileName(self, "Import Plot Configuration", "", "JSON Files (*.json)")
+        if not file_path:
+            self.set_status_message("")
+            return
+        try:
+            with open(file_path, 'r') as f:
+                config = json.load(f)
+            # Clear current plot
+            self.canvas.axes.clear()
+            self.line_list.clear()
+            self.plotted_lines = []
+            # Restore lines
+            for line_info in config.get('plotted_lines', []):
+                file = line_info['file']
+                params = line_info['params']
+                comments = line_info.get('comments', [])
+                try:
+                    df, _, _, _ = read_data_file(file)
+                except Exception as e:
+                    print(f"Could not read file {file}: {e}")
+                    continue
+                self.add_plot_line(file, df, params, comments)
+            # Restore global params
+            global_params = config.get('global_params', {})
+            self.global_params = global_params
+            self.canvas.apply_plot_params(global_params)
+            self.canvas.figure.tight_layout()
+            self.canvas.draw()
+            self.update_param_widget_fields_from_plot()
+            self.set_status_message(f"Imported plot configuration from {file_path}", 5000)
+        except Exception as e:
+            self.set_status_message(f"Import failed: {e}", 5000)
 
     # TODO: Add option to use numpy.loadtxt instead of pandas.read_csv for data reading
+
+    def set_status_message(self, msg, timeout=0):
+        self.statusBar.showMessage(msg, timeout)
+        QApplication.processEvents()
+    
+    def clear_status_message(self):
+        self.statusBar.clearMessage()
 
 def main():
     app = QApplication(sys.argv)
