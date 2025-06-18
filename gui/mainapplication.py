@@ -1,8 +1,8 @@
 import sys
-from PyQt5.QtWidgets import QApplication, QMainWindow
+from PyQt5.QtWidgets import QApplication, QMainWindow, QDialog
 from gui.mpl_canvas import MplCanvas
 from gui.plot_dialog import PlotParamDialog
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QFileSystemModel, QTabWidget, QAction, QFileDialog, QMenuBar, QListWidget, QListWidgetItem, QMessageBox, QDockWidget, QLabel, QSizePolicy, QPushButton, QInputDialog)
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QFileSystemModel, QTabWidget, QAction, QFileDialog, QMenuBar, QListWidget, QListWidgetItem, QMessageBox, QDockWidget, QLabel, QSizePolicy, QPushButton, QInputDialog, QMenu)
 from PyQt5.QtCore import Qt
 import os
 from DataManagement.data_reader import read_data_file
@@ -15,7 +15,8 @@ import json
 from gui.line_list_widget import LineListWidget
 from logger import get_logger
 import logging
-from localvars import RAW_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR, DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE
+from localvars import RAW_DATA_DIR, PREPROCESSED_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR, DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE, PROCESSING_MODULES_DIR
+from gui.processing_dialog import ProcessingDialog
 
 logger = get_logger(__name__)
 
@@ -48,6 +49,19 @@ class MainWindow(QMainWindow):
         self.raw_tree.setHeaderHidden(True)
         self.raw_tree.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.tabs.addTab(self._make_tab_widget(self.raw_tree, "Raw Data"), "Raw Data")
+
+        # Preprocessed Data tab (inserted between Raw and Postprocessed)
+        if not os.path.exists(PREPROCESSED_DATA_DIR):
+            os.makedirs(PREPROCESSED_DATA_DIR)
+        self.pre_model = QFileSystemModel()
+        self.pre_model.setRootPath(PREPROCESSED_DATA_DIR)
+        self.pre_tree = QTreeView()
+        self.pre_tree.setModel(self.pre_model)
+        self.pre_tree.setRootIndex(self.pre_model.index(PREPROCESSED_DATA_DIR))
+        self.pre_tree.setColumnWidth(0, 250)
+        self.pre_tree.setHeaderHidden(True)
+        self.pre_tree.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.tabs.insertTab(1, self._make_tab_widget(self.pre_tree, "Preprocessed Data"), "Preprocessed Data")
 
         # Postprocessed Data tab
         if not os.path.exists(POSTPROCESSED_DATA_DIR):
@@ -113,6 +127,8 @@ class MainWindow(QMainWindow):
         self.post_tree.doubleClicked.connect(lambda idx: self.handle_file_double_click(idx, 'post'))
 
         self.global_params = {}
+
+        self._setup_file_tree_context_menu()
 
     def _create_menubar(self):
         menubar = self.menuBar()
@@ -629,6 +645,58 @@ class MainWindow(QMainWindow):
     #def _on_item_double_clicked(self, item):
     #    idx = self.line_list_widget.list_widget.row(item)
     #    self.edit_line_params(idx)
+
+    def _setup_file_tree_context_menu(self):
+        self.raw_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.raw_tree.customContextMenuRequested.connect(lambda pos: self._show_file_context_menu(self.raw_tree, pos, 'raw'))
+        self.post_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.post_tree.customContextMenuRequested.connect(lambda pos: self._show_file_context_menu(self.post_tree, pos, 'post'))
+
+    def _show_file_context_menu(self, tree, pos, tree_type):
+        index = tree.indexAt(pos)
+        if not index.isValid():
+            return
+        model = self.raw_model if tree_type == 'raw' else self.post_model
+        file_path = model.filePath(index)
+        if os.path.isdir(file_path):
+            return
+        menu = QMenu()
+        preprocess_action = QAction('Preprocess with...', self)
+        postprocess_action = QAction('Postprocess with...', self)
+        preprocess_action.triggered.connect(lambda: self._run_processing_dialog(file_path, 'pre'))
+        postprocess_action.triggered.connect(lambda: self._run_processing_dialog(file_path, 'post'))
+        menu.addAction(preprocess_action)
+        menu.addAction(postprocess_action)
+        menu.exec_(tree.viewport().mapToGlobal(pos))
+
+    def _run_processing_dialog(self, file_path, mode):
+        # Load columns for dropdowns using data_reader
+        columns = []
+        df = None
+        try:
+            df, _, _, _ = read_data_file(file_path)
+            columns = list(df.columns)
+        except Exception as e:
+            logger.warning(f'Could not read columns from {file_path}: {e}')
+        try:
+            dialog = ProcessingDialog(file_path, module_type=mode, data_columns=columns, parent=self)
+            if dialog.exec_() == QDialog.Accepted:
+                module_cls, params = dialog.get_selected_module()
+                # Determine output dir based on mode
+                if mode == 'pre':
+                    output_dir = PREPROCESSED_DATA_DIR
+                else:
+                    output_dir = POSTPROCESSED_DATA_DIR
+                module = module_cls(file_path, output_dir, params, df)
+                try:
+                    module.load()
+                    module.process()
+                    module.save()
+                    QMessageBox.information(self, "Processing Complete", f"Processing complete. Output saved to {output_dir}")
+                except Exception as e:
+                    QMessageBox.warning(self, "Processing Error", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "Dialog Error", str(e))
 
 def main():
     app = QApplication(sys.argv)
