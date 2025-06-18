@@ -1,0 +1,1 @@
+from gui.mainapplication import MainWindow, main 

@@ -1,0 +1,502 @@
+import sys
+from PyQt5.QtWidgets import QApplication, QMainWindow
+from gui.mpl_canvas import MplCanvas
+from gui.plot_dialog import PlotParamDialog
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QFileSystemModel, QTabWidget, QAction, QFileDialog, QMenuBar, QListWidget, QListWidgetItem, QMessageBox, QDockWidget, QLabel, QSizePolicy, QPushButton, QInputDialog)
+from PyQt5.QtCore import Qt
+import os
+from DataManagement.data_reader import read_data_file
+import pandas as pd
+from gui.param_widget import ParamWidget
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Corbino Analysis GUI")
+        self.setGeometry(100, 100, 1200, 800)
+        
+
+        self._create_menubar()
+
+        # Tabs for file browsers
+        self.tabs = QTabWidget()
+        self.tabs.setTabPosition(QTabWidget.North)
+
+        # Raw Data tab
+        self.raw_model = QFileSystemModel()
+        raw_dir = os.path.join('data','raw')
+        if not os.path.exists(raw_dir):
+            os.makedirs(raw_dir)
+        self.raw_model.setRootPath(raw_dir)
+        self.raw_tree = QTreeView()
+        self.raw_tree.setModel(self.raw_model)
+        self.raw_tree.setRootIndex(self.raw_model.index(raw_dir))
+        self.raw_tree.setColumnWidth(0, 250)
+        self.raw_tree.setHeaderHidden(True)
+        self.raw_tree.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.tabs.addTab(self._make_tab_widget(self.raw_tree, "Raw Data"), "Raw Data")
+
+        # Postprocessed Data tab
+        postprocessed_dir = os.path.join('data', 'postprocessed')
+        if not os.path.exists(postprocessed_dir):
+            os.makedirs(postprocessed_dir)
+        self.post_model = QFileSystemModel()
+        self.post_model.setRootPath(postprocessed_dir)
+        self.post_tree = QTreeView()
+        self.post_tree.setModel(self.post_model)
+        self.post_tree.setRootIndex(self.post_model.index(postprocessed_dir))
+        self.post_tree.setColumnWidth(0, 250)
+        self.post_tree.setHeaderHidden(True)
+        self.post_tree.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.tabs.addTab(self._make_tab_widget(self.post_tree, "Postprocessed Data"), "Postprocessed Data")
+
+        # Data Browser Dock
+        self.data_browser_dock = QDockWidget("Data Browser", self)
+        self.data_browser_dock.setWidget(self.tabs)
+        self.data_browser_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.data_browser_dock)
+
+        # Matplotlib plot area dock
+        self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        self.plot_widget = QWidget()
+        plot_layout = QVBoxLayout()
+        plot_layout.setContentsMargins(0, 0, 0, 0)
+        plot_layout.setSpacing(0)
+        plot_layout.addWidget(self.toolbar)
+        plot_layout.addWidget(self.canvas)
+        self.plot_widget.setLayout(plot_layout)
+        self.plot_dock = QDockWidget("Plot Area", self)
+        self.plot_dock.setWidget(self.plot_widget)
+        self.plot_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.plot_dock)
+
+        # Plotted lines list dock
+        self.line_list = QListWidget()
+        self.line_list.setMaximumHeight(120)
+        self.line_list.itemClicked.connect(self.edit_line_params)
+        self.lines_dock = QDockWidget("Plotted Lines", self)
+        self.lines_dock.setWidget(self.line_list)
+        self.lines_dock.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea | Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.lines_dock)
+
+        # Parameter controls widget (already dockable)
+        self.param_widget = ParamWidget(current_params=None)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.param_widget)
+        self.param_widget.paramsSelected.connect(self.apply_global_plot_params)
+        self.param_widget.requestUpdateParams.connect(self.update_param_widget_fields_from_plot)
+        self.param_widget.requestResetPlot.connect(self.reset_plot_and_params)
+        self.param_widget.exportToMatplotlibRequested.connect(self.export_to_matplotlib)
+        # Tabify Plot Area and Plot Options by default
+        self.tabifyDockWidget(self.plot_dock, self.param_widget)
+        self.plot_dock.raise_()
+
+        # Store plot info
+        self.plotted_lines = []  # List of dicts: {file, params, line}
+
+        # Connect file tree double-clicks
+        self.raw_tree.doubleClicked.connect(lambda idx: self.handle_file_double_click(idx, 'raw'))
+        self.post_tree.doubleClicked.connect(lambda idx: self.handle_file_double_click(idx, 'post'))
+
+        self.global_params = {}
+
+    def _create_menubar(self):
+        menubar = self.menuBar()
+
+        # File menu
+        file_menu = menubar.addMenu("File")
+        save_plot_action = QAction("Save Plot", self)
+        save_plot_action.triggered.connect(self.save_plot)
+        file_menu.addAction(save_plot_action)
+
+        refresh_plot_action = QAction("Refresh Plot", self)
+        refresh_plot_action.triggered.connect(self.reset_plot_and_params)
+        file_menu.addAction(refresh_plot_action)
+
+        # Add more file actions as needed
+
+        # Edit menu (placeholder)
+        edit_menu = menubar.addMenu("Edit")
+        # Add edit actions as needed
+
+        # Add File menu item for export
+        export_action = QAction("Open in Matplotlib Window", self)
+        export_action.triggered.connect(self.export_to_matplotlib)
+        file_menu.addAction(export_action)
+
+    def save_plot(self):
+        options = QFileDialog.Options()
+        # Ensure 'plots' directory exists
+        default_dir = os.path.join('data','plots')
+        if not os.path.exists(default_dir):
+            os.makedirs(default_dir)
+        default_path = os.path.join(default_dir, 'plot.pdf')
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Plot As",
+            default_path,
+            "PDF Files (*.pdf);;PNG Files (*.png);;JPEG Files (*.jpg);;All Files (*)",
+            options=options
+        )
+        if file_path:
+            self.canvas.figure.savefig(file_path)
+
+    def _make_tab_widget(self, tree, label):
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(tree)
+        widget.setLayout(layout)
+        return widget
+
+    def handle_file_double_click(self, index, tree_type):
+        if tree_type == 'raw':
+            model = self.raw_model
+        else:
+            model = self.post_model
+        file_path = model.filePath(index)
+        if os.path.isdir(file_path):
+            return
+        try:
+            df, comments, meta, ftype = read_data_file(file_path)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not read file:\n{file_path}\n{e}")
+            return
+        columns = list(df.columns)
+        self._last_file_info = {'comments': comments, 'meta': meta, 'filetype': ftype, 'file_path': file_path, 'df': df}
+        dialog = PlotParamDialog(columns, parent=self, comments=comments)
+        dialog.paramsSelected.connect(lambda params, fp=file_path, d=df: self.add_plot_line(fp, d, params, comments))
+        dialog.exec_()
+
+    def add_plot_line(self, file_path, df, params, comments):
+        x = df[params['x']]
+        y = df[params['y']]
+        # Calculation for x
+        if 'calc_x' in params:
+            np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+            local_env = {'x': x, 'y': y}
+            local_env.update(np_env)
+            try:
+                x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
+            except Exception as e:
+                print(f"X calculation error: {params['calc_x']}: {e}")
+        # Calculation for y
+        if 'calc_y' in params:
+            np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+            local_env = {'x': x, 'y': y}
+            local_env.update(np_env)
+            try:
+                y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
+            except Exception as e:
+                print(f"Y calculation error: {params['calc_y']}: {e}")
+        mask = np.ones(len(x), dtype=bool)
+        if 'minx' in params:
+            mask &= x >= float(params['minx'])
+        if 'maxx' in params:
+            mask &= x <= float(params['maxx'])
+        if 'miny' in params:
+            mask &= y >= float(params['miny'])
+        if 'maxy' in params:
+            mask &= y <= float(params['maxy'])
+        # Custom mask expressions
+        if 'mask_exprs' in params:
+            np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+            local_env = {'x': x, 'y': y}
+            local_env.update(np_env)
+            for expr in params['mask_exprs']:
+                try:
+                    mask_expr = eval(expr, {"__builtins__": {}}, local_env)
+                    mask &= mask_expr
+                except Exception as e:
+                    print(f"Mask expression error: {expr}: {e}")
+        x = x[mask]
+        y = y[mask]
+        if 'legend' in params:
+            label = params['legend']
+        else:
+            label = os.path.basename(file_path)
+        plot_kwargs = {}
+        if 'color' in params:
+            plot_kwargs['color'] = params['color']
+        if 'linestyle' in params:
+            plot_kwargs['linestyle'] = params['linestyle']
+        if 'marker' in params:
+            plot_kwargs['marker'] = params['marker']
+        
+        line, = self.canvas.axes.plot(x, y, label=label, **plot_kwargs)
+        self.canvas.set_line_style_and_color(line, params)
+        self.canvas.apply_plot_params(params) # Reapply global params
+        self.canvas.figure.tight_layout()
+        self.canvas.draw()
+        line_info = {'file': file_path, 'params': params, 'line': line, 'comments': comments}
+        self.plotted_lines.append(line_info)
+        item = QListWidgetItem(f"{os.path.basename(file_path)}: {params['y']} vs {params['x']}")
+        self.line_list.addItem(item)
+        item.setData(1000, len(self.plotted_lines) - 1)
+
+    def edit_line_params(self, item):
+        idx = item.data(1000)
+        line_info = self.plotted_lines[idx]
+        file_path = line_info['file']
+        params = line_info['params']
+        comments = line_info.get('comments', [])
+        try:
+            df, _, _, _ = read_data_file(file_path)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not read file:\n{file_path}\n{e}")
+            return
+        columns = list(df.columns)
+        dialog = PlotParamDialog(columns, current_params=params, parent=self, comments=comments)
+        dialog.paramsSelected.connect(lambda new_params, fp=file_path, d=df, i=idx: self.update_plot_line(fp, d, new_params, i))
+        dialog.exec_()
+
+    def update_plot_line(self, file_path, df, params, idx):
+        x = df[params['x']]
+        y = df[params['y']]
+        # Calculation for x
+        if 'calc_x' in params:
+            np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+            local_env = {'x': x, 'y': y}
+            local_env.update(np_env)
+            try:
+                x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
+            except Exception as e:
+                print(f"X calculation error: {params['calc_x']}: {e}")
+        # Calculation for y
+        if 'calc_y' in params:
+            np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+            local_env = {'x': x, 'y': y}
+            local_env.update(np_env)
+            try:
+                y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
+            except Exception as e:
+                print(f"Y calculation error: {params['calc_y']}: {e}")
+        mask = np.ones(len(x), dtype=bool)
+        if 'minx' in params:
+            mask &= x >= float(params['minx'])
+        if 'maxx' in params:
+            mask &= x <= float(params['maxx'])
+        if 'miny' in params:
+            mask &= y >= float(params['miny'])
+        if 'maxy' in params:
+            mask &= y <= float(params['maxy'])
+        if 'mask_exprs' in params:
+            np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+            local_env = {'x': x, 'y': y}
+            local_env.update(np_env)
+            for expr in params['mask_exprs']:
+                try:
+                    mask_expr = eval(expr, {"__builtins__": {}}, local_env)
+                    mask &= mask_expr
+                except Exception as e:
+                    print(f"Mask expression error: {expr}: {e}")
+        x = x[mask]
+        y = y[mask]
+        line = self.plotted_lines[idx]['line']
+        line.set_xdata(x)
+        line.set_ydata(y)
+        if 'legend' in params:
+            line.set_label(params['legend'])
+        else:
+            line.set_label(f"{params['y']} vs {params['x']}")
+        self.plotted_lines[idx]['params'] = params
+        self.canvas.set_line_style_and_color(line, params)
+        self.canvas.axes.relim()
+        self.canvas.apply_plot_params(self.global_params)
+        self.canvas.figure.tight_layout()
+        self.canvas.draw()
+        
+
+    def refresh_plot(self):
+        # This method is now handled by apply_plot_params
+        pass
+
+    def apply_global_plot_params(self, params):
+        self.global_params = params
+        self.canvas.apply_plot_params(params)
+        self.canvas.figure.tight_layout()
+        self.canvas.draw()
+        self.plot_dock.raise_() # Show plot now
+
+    def update_param_widget_fields_from_plot(self):
+        params = self.canvas.get_plot_params()
+        self.param_widget.update_fields_from_params(params)
+
+    def reset_plot_and_params(self):
+        # Clear the axes
+        self.canvas.axes.clear()
+        # Replot all lines from self.plotted_lines
+        for line_info in self.plotted_lines:
+            df = None
+            try:
+                df, _, _, _ = read_data_file(line_info['file'])
+            except Exception:
+                continue
+            params = line_info['params']
+            x = df[params['x']]
+            y = df[params['y']]
+            # Calculation for x
+            if 'calc_x' in params:
+                np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+                local_env = {'x': x, 'y': y}
+                local_env.update(np_env)
+                try:
+                    x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
+                except Exception as e:
+                    print(f"X calculation error: {params['calc_x']}: {e}")
+            # Calculation for y
+            if 'calc_y' in params:
+                np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+                local_env = {'x': x, 'y': y}
+                local_env.update(np_env)
+                try:
+                    y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
+                except Exception as e:
+                    print(f"Y calculation error: {params['calc_y']}: {e}")
+            mask = np.ones(len(x), dtype=bool)
+            if 'minx' in params:
+                mask &= x >= float(params['minx'])
+            if 'maxx' in params:
+                mask &= x <= float(params['maxx'])
+            if 'miny' in params:
+                mask &= y >= float(params['miny'])
+            if 'maxy' in params:
+                mask &= y <= float(params['maxy'])
+            if 'mask_exprs' in params:
+                np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+                local_env = {'x': x, 'y': y}
+                local_env.update(np_env)
+                for expr in params['mask_exprs']:
+                    try:
+                        mask_expr = eval(expr, {"__builtins__": {}}, local_env)
+                        mask &= mask_expr
+                    except Exception as e:
+                        print(f"Mask expression error: {expr}: {e}")
+            x = x[mask]
+            y = y[mask]
+            label = params.get('legend', line_info['file'])
+            line, = self.canvas.axes.plot(x, y, label=label)
+            self.canvas.set_line_style_and_color(line, params)
+        # Always show legend by default after reset
+        self.canvas.apply_plot_params({'legend': True})
+        self.canvas.figure.tight_layout()
+        self.canvas.draw()
+        # Reset the param widget fields
+        self.param_widget.title_edit.clear()
+        self.param_widget.xlabel_edit.clear()
+        self.param_widget.ylabel_edit.clear()
+        self.param_widget.xlim_min.clear()
+        self.param_widget.xlim_max.clear()
+        self.param_widget.ylim_min.clear()
+        self.param_widget.ylim_max.clear()
+        self.param_widget.grid_check.setChecked(False)
+        self.param_widget.legend_check.setChecked(True)
+        self.param_widget.xticks_edit.clear()
+        self.param_widget.yticks_edit.clear()
+        # Update placeholders to reflect current plot state
+        self.update_param_widget_fields_from_plot()
+        
+        self.plot_dock.raise_()
+
+    def export_to_matplotlib(self):
+        w, ok1 = QInputDialog.getDouble(self, "Figure Width", "Width (inches):", 8.0, 1.0, 30.0, 1)
+        h, ok2 = QInputDialog.getDouble(self, "Figure Height", "Height (inches):", 6.0, 1.0, 30.0, 1)
+        if not (ok1 and ok2):
+            return
+        fig, ax = plt.subplots(figsize=(w, h))
+        for line_info in self.plotted_lines:
+            df, _, _, _ = read_data_file(line_info['file'])
+            params = line_info['params']
+            x = df[params['x']]
+            y = df[params['y']]
+            # Calculation for x
+            if 'calc_x' in params:
+                np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+                local_env = {'x': x, 'y': y}
+                local_env.update(np_env)
+                try:
+                    x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
+                except Exception as e:
+                    print(f"X calculation error: {params['calc_x']}: {e}")
+            # Calculation for y
+            if 'calc_y' in params:
+                np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+                local_env = {'x': x, 'y': y}
+                local_env.update(np_env)
+                try:
+                    y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
+                except Exception as e:
+                    print(f"Y calculation error: {params['calc_y']}: {e}")
+            mask = np.ones(len(x), dtype=bool)
+            if 'minx' in params:
+                mask &= x >= float(params['minx'])
+            if 'maxx' in params:
+                mask &= x <= float(params['maxx'])
+            if 'miny' in params:
+                mask &= y >= float(params['miny'])
+            if 'maxy' in params:
+                mask &= y <= float(params['maxy'])
+            if 'mask_exprs' in params:
+                np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+                local_env = {'x': x, 'y': y}
+                local_env.update(np_env)
+                for expr in params['mask_exprs']:
+                    try:
+                        mask_expr = eval(expr, {"__builtins__": {}}, local_env)
+                        mask &= mask_expr
+                    except Exception as e:
+                        print(f"Mask expression error: {expr}: {e}")
+            x = x[mask]
+            y = y[mask]
+            label = params.get('legend', line_info['file'])
+            plot_kwargs = {}
+            if 'color' in params:
+                plot_kwargs['color'] = params['color']
+            if 'linestyle' in params:
+                plot_kwargs['linestyle'] = params['linestyle']
+            if 'marker' in params:
+                plot_kwargs['marker'] = params['marker']
+            ax.plot(x, y, label=label, **plot_kwargs)
+        # Apply global params
+        global_params = self.canvas.get_plot_params()
+        ax.set_title(global_params.get('title', ''))
+        ax.set_xlabel(global_params.get('xlabel', ''))
+        ax.set_ylabel(global_params.get('ylabel', ''))
+        xlim = global_params.get('xlim', (None, None))
+        if xlim and xlim[0] is not None and xlim[1] is not None:
+            ax.set_xlim(xlim)
+        ylim = global_params.get('ylim', (None, None))
+        if ylim and ylim[0] is not None and ylim[1] is not None:
+            ax.set_ylim(ylim)
+        if global_params.get('grid', False):
+            ax.grid(True)
+        if global_params.get('legend', True):
+            ax.legend()
+        xticks = global_params.get('xticks', '')
+        if xticks:
+            try:
+                xtick_vals = [float(x.strip()) for x in xticks.split(',') if x.strip()]
+                ax.set_xticks(xtick_vals)
+            except Exception:
+                pass
+        yticks = global_params.get('yticks', '')
+        if yticks:
+            try:
+                ytick_vals = [float(y.strip()) for y in yticks.split(',') if y.strip()]
+                ax.set_yticks(ytick_vals)
+            except Exception:
+                pass
+        fig.tight_layout()
+        plt.show()
+
+    # TODO: Add option to use numpy.loadtxt instead of pandas.read_csv for data reading
+
+def main():
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec_()) 
