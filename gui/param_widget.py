@@ -1,5 +1,8 @@
 from PyQt5.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QFormLayout, QLineEdit, QCheckBox, QPushButton, QHBoxLayout, QLabel)
 from PyQt5.QtCore import pyqtSignal
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 class ParamWidget(QDockWidget):
     paramsSelected = pyqtSignal(dict)
@@ -9,6 +12,7 @@ class ParamWidget(QDockWidget):
 
     def __init__(self, current_params=None, parent=None):
         super().__init__("Plot Options", parent)
+        logger.debug('ParamWidget initialized')
         self.current_params = current_params or {}
         self._init_ui()
 
@@ -111,43 +115,62 @@ class ParamWidget(QDockWidget):
             'xticks': self.xticks_edit.text().strip(),
             'yticks': self.yticks_edit.text().strip(),
         }
+        logger.debug(f'Exported params: {params}')
         return params
 
     def apply(self):
         params = self.export_params()
+        logger.info('Params applied')
         self.paramsSelected.emit(params)
 
     def reset(self):
+        logger.info('Params reset requested')
         self.requestResetPlot.emit()
 
     def reload(self):
+        logger.info('Params reload requested')
         self.requestUpdateParams.emit()
 
     def focusInEvent(self, event):
+        logger.debug('ParamWidget gained focus')
         self.requestUpdateParams.emit()
         super().focusInEvent(event)
 
-
     def update_fields_from_params(self, params):
+        logger.debug(f'Updating fields from params: {params}')
         self.title_edit.setText(params.get('title', ''))
         self.xlabel_edit.setText(params.get('xlabel', ''))
         self.ylabel_edit.setText(params.get('ylabel', ''))
         xlim = params.get('xlim', (None, None))
+        xlim_custom = params.get('xlim_custom', False)
         if xlim and len(xlim) == 2:
-            if not self.xlim_min.text():
-                self.xlim_min.setPlaceholderText(str(xlim[0]) if xlim[0] is not None else '')
-            if not self.xlim_max.text():
-                self.xlim_max.setPlaceholderText(str(xlim[1]) if xlim[1] is not None else '')
+            if xlim_custom:
+                self.xlim_min.setText(str(xlim[0]) if xlim[0] is not None else '')
+                self.xlim_max.setText(str(xlim[1]) if xlim[1] is not None else '')
+            else:
+                self.xlim_min.clear()
+                self.xlim_max.clear()
+                self.xlim_min.setPlaceholderText(str(xlim[0]) if xlim[0] is not None else 'X min')
+                self.xlim_max.setPlaceholderText(str(xlim[1]) if xlim[1] is not None else 'X max')
         else:
+            self.xlim_min.clear()
+            self.xlim_max.clear()
             self.xlim_min.setPlaceholderText('X min')
             self.xlim_max.setPlaceholderText('X max')
         ylim = params.get('ylim', (None, None))
+        ylim_custom = params.get('ylim_custom', False)
         if ylim and len(ylim) == 2:
-            if not self.ylim_min.text():
-                self.ylim_min.setPlaceholderText(str(ylim[0]) if ylim[0] is not None else '')
-            if not self.ylim_max.text():
-                self.ylim_max.setPlaceholderText(str(ylim[1]) if ylim[1] is not None else '')
+            if ylim_custom:
+                self.ylim_min.setText(str(ylim[0]) if ylim[0] is not None else '')
+                self.ylim_max.setText(str(ylim[1]) if ylim[1] is not None else '')
+            else:
+                self.ylim_min.clear()
+                self.ylim_max.clear()
+                self.ylim_min.setPlaceholderText(str(ylim[0]) if ylim[0] is not None else 'Y min')
+                self.ylim_max.setPlaceholderText(str(ylim[1]) if ylim[1] is not None else 'Y max')
         else:
+            self.ylim_min.clear()
+            self.ylim_max.clear()
             self.ylim_min.setPlaceholderText('Y min')
             self.ylim_max.setPlaceholderText('Y max')
         self.grid_check.setChecked(params.get('grid', False))
@@ -155,4 +178,5 @@ class ParamWidget(QDockWidget):
         if not self.xticks_edit.text():
             self.xticks_edit.setPlaceholderText(params.get('xticks', ''))
         if not self.yticks_edit.text():
-            self.yticks_edit.setPlaceholderText(params.get('yticks', '')) 
+            self.yticks_edit.setPlaceholderText(params.get('yticks', ''))
+        logger.info('Fields updated from params') 

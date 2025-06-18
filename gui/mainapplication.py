@@ -13,11 +13,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import json
 from gui.line_list_widget import LineListWidget
+from logger import get_logger
+import logging
+from localvars import RAW_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR, DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE
 
+logger = get_logger(__name__)
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.verbosity = 'DEBUG'  # Can be set to INFO, WARNING, etc.
+        logger.setLevel(getattr(logging, self.verbosity, logging.DEBUG))
+        logger.debug('MainWindow initialized with verbosity %s', self.verbosity)
         self.setWindowTitle("Corbino Analysis GUI")
         self.setGeometry(100, 100, 1200, 800)
         
@@ -31,27 +38,25 @@ class MainWindow(QMainWindow):
 
         # Raw Data tab
         self.raw_model = QFileSystemModel()
-        raw_dir = os.path.join('data','raw')
-        if not os.path.exists(raw_dir):
-            os.makedirs(raw_dir)
-        self.raw_model.setRootPath(raw_dir)
+        if not os.path.exists(RAW_DATA_DIR):
+            os.makedirs(RAW_DATA_DIR)
+        self.raw_model.setRootPath(RAW_DATA_DIR)
         self.raw_tree = QTreeView()
         self.raw_tree.setModel(self.raw_model)
-        self.raw_tree.setRootIndex(self.raw_model.index(raw_dir))
+        self.raw_tree.setRootIndex(self.raw_model.index(RAW_DATA_DIR))
         self.raw_tree.setColumnWidth(0, 250)
         self.raw_tree.setHeaderHidden(True)
         self.raw_tree.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.tabs.addTab(self._make_tab_widget(self.raw_tree, "Raw Data"), "Raw Data")
 
         # Postprocessed Data tab
-        postprocessed_dir = os.path.join('data', 'postprocessed')
-        if not os.path.exists(postprocessed_dir):
-            os.makedirs(postprocessed_dir)
+        if not os.path.exists(POSTPROCESSED_DATA_DIR):
+            os.makedirs(POSTPROCESSED_DATA_DIR)
         self.post_model = QFileSystemModel()
-        self.post_model.setRootPath(postprocessed_dir)
+        self.post_model.setRootPath(POSTPROCESSED_DATA_DIR)
         self.post_tree = QTreeView()
         self.post_tree.setModel(self.post_model)
-        self.post_tree.setRootIndex(self.post_model.index(postprocessed_dir))
+        self.post_tree.setRootIndex(self.post_model.index(POSTPROCESSED_DATA_DIR))
         self.post_tree.setColumnWidth(0, 250)
         self.post_tree.setHeaderHidden(True)
         self.post_tree.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
@@ -80,7 +85,7 @@ class MainWindow(QMainWindow):
 
         # Plotted lines list dock
         self.line_list_widget = LineListWidget()
-        #self.line_list_widget.setMaximumHeight(120)
+        #self.line_list_widget.setMaximumHeight(120) want to resize
         self.line_list_widget.showHideToggled.connect(self.toggle_line_visibility)
         self.line_list_widget.removeRequested.connect(self.remove_plot_line)
         self.line_list_widget.editRequested.connect(self.edit_line_params)
@@ -143,15 +148,13 @@ class MainWindow(QMainWindow):
 
     def save_plot(self):
         options = QFileDialog.Options()
-        # Ensure 'plots' directory exists
-        default_dir = os.path.join('data','plots')
-        if not os.path.exists(default_dir):
-            os.makedirs(default_dir)
-        default_path = os.path.join(default_dir, 'plot.pdf')
+        # Ensure plots directory exists
+        if not os.path.exists(PLOTS_DIR):
+            os.makedirs(PLOTS_DIR)
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save Plot As",
-            default_path,
+            DEFAULT_PLOT_SAVE,
             "PDF Files (*.pdf);;PNG Files (*.png);;JPEG Files (*.jpg);;All Files (*)",
             options=options
         )
@@ -186,6 +189,7 @@ class MainWindow(QMainWindow):
         dialog.exec_()
 
     def add_plot_line(self, file_path, df, params, comments):
+        logger.debug(f"Adding plot line for file: {file_path}, params: {params}")
         self.set_status_message("Adding plot line...")
         x = df[params['x']]
         y = df[params['y']]
@@ -249,9 +253,11 @@ class MainWindow(QMainWindow):
         line_info = {'file': file_path, 'params': params, 'line': line, 'comments': comments}
         self.plotted_lines.append(line_info)
         self.line_list_widget.add_line(label, visible=True)
+        logger.info(f"Plot line added: {label}")
         self.clear_status_message()
 
     def edit_line_params(self, idx):
+        logger.debug(f"Editing line params idx={idx}")
         if 0 <= idx < len(self.plotted_lines):
             line_info = self.plotted_lines[idx]
             file_path = line_info['file']
@@ -260,6 +266,7 @@ class MainWindow(QMainWindow):
             try:
                 df, _, _, _ = read_data_file(file_path)
             except Exception as e:
+                logger.error(f"Could not read file {file_path}: {e}")
                 QMessageBox.warning(self, "Error", f"Could not read file:\n{file_path}\n{e}")
                 return
             columns = list(df.columns)
@@ -268,6 +275,7 @@ class MainWindow(QMainWindow):
             dialog.exec_()
 
     def update_plot_line(self, file_path, df, params, idx):
+        logger.debug(f"Updating plot line idx={idx}, file={file_path}, params={params}")
         self.set_status_message("Updating plot line...")
         x = df[params['x']]
         y = df[params['y']]
@@ -325,6 +333,7 @@ class MainWindow(QMainWindow):
         self.canvas.apply_plot_params(self.global_params)
         self.canvas.figure.tight_layout()
         self.canvas.draw()
+        logger.info(f"Plot line updated at idx={idx}")
         self.clear_status_message()
         
 
@@ -346,15 +355,13 @@ class MainWindow(QMainWindow):
         self.param_widget.update_fields_from_params(params)
 
     def redraw_plot(self):
-        # Clear the axes
+        logger.debug("Redrawing plot with current plotted_lines.")
         self.canvas.axes.clear()
-        # Replot all lines from self.plotted_lines
         for line_info in self.plotted_lines:
-            df = None
             try:
                 df, _, _, _ = read_data_file(line_info['file'])
             except Exception as e:
-                print(f"Error reading file {line_info['file']}: {e}")
+                logger.error(f"Error reading file {line_info['file']}: {e}")
                 continue
             params = line_info['params']
             x = df[params['x']]
@@ -402,16 +409,15 @@ class MainWindow(QMainWindow):
             line, = self.canvas.axes.plot(x, y, label=label)
             line_info['line'] = line
             self.canvas.set_line_style_and_color(line, params)
-        
+        logger.info("Plot redrawn.")
+
     def reset_plot_and_params(self):
+        logger.debug("Resetting plot and parameters...")
         self.set_status_message("Resetting plot and parameters...")
-        # Redraw axis
         self.redraw_plot()
-        # Always show legend by default after reset
         self.canvas.apply_plot_params({'legend': True})
         self.canvas.figure.tight_layout()
         self.canvas.draw()
-        # Reset the param widget fields
         self.param_widget.title_edit.clear()
         self.param_widget.xlabel_edit.clear()
         self.param_widget.ylabel_edit.clear()
@@ -423,11 +429,10 @@ class MainWindow(QMainWindow):
         self.param_widget.legend_check.setChecked(True)
         self.param_widget.xticks_edit.clear()
         self.param_widget.yticks_edit.clear()
-        # Update placeholders to reflect current plot state
         self.update_param_widget_fields_from_plot()
-        
         self.plot_dock.raise_()
         self.clear_status_message()
+        logger.info("Plot and parameters reset.")
 
     def export_to_matplotlib(self):
         self.set_status_message("Exporting plot to matplotlib window...")
@@ -526,7 +531,7 @@ class MainWindow(QMainWindow):
     def export_plot_config(self):
         self.set_status_message("Exporting plot configuration...")
         from PyQt5.QtWidgets import QFileDialog
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export Plot Configuration", "plot_config.json", "JSON Files (*.json)")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
         if not file_path:
             self.set_status_message("")
             return
@@ -551,7 +556,7 @@ class MainWindow(QMainWindow):
     def import_plot_config(self):
         self.set_status_message("Importing plot configuration...")
         from PyQt5.QtWidgets import QFileDialog
-        file_path, _ = QFileDialog.getOpenFileName(self, "Import Plot Configuration", "", "JSON Files (*.json)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "Import Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
         if not file_path:
             self.set_status_message("")
             return
@@ -594,30 +599,32 @@ class MainWindow(QMainWindow):
         self.statusBar.clearMessage()
 
     def toggle_line_visibility(self, idx, visible):
+        logger.debug(f"Toggling line visibility idx={idx}, visible={visible}")
         if 0 <= idx < len(self.plotted_lines):
             line = self.plotted_lines[idx]['line']
             line.set_visible(visible)
             self.canvas.draw()
+            logger.info(f"Line visibility toggled idx={idx}, visible={visible}")
         else:
-            print(f"Error toggling line visibility: {idx} is out of range")
+            logger.error(f"Error toggling line visibility: {idx} is out of range")
 
     def remove_plot_line(self, idx):
+        logger.debug(f"Removing plot line idx={idx}")
         if 0 <= idx < len(self.plotted_lines):
-            # Remove from axes
             line = self.plotted_lines[idx]['line']
             try:
                 line.remove()
             except Exception as e:
-                print(f"Error removing line: {e}")
-            # Remove from data
+                logger.error(f"Error removing line: {e}")
             self.plotted_lines.pop(idx)
             self.line_list_widget.remove_line(idx)
             self.redraw_plot()
-            self.canvas.apply_plot_params(self.global_params) # Reapply global params
+            self.canvas.apply_plot_params(self.global_params)
             self.canvas.figure.tight_layout()
             self.canvas.draw()
+            logger.info(f"Plot line removed idx={idx}")
         else:
-            print(f"Error removing line: {idx} is out of range")
+            logger.error(f"Error removing line: {idx} is out of range")
 
     #def _on_item_double_clicked(self, item):
     #    idx = self.line_list_widget.list_widget.row(item)

@@ -1,5 +1,9 @@
 import pandas as pd
 import re
+from logger import get_logger
+from localvars import RAW_DATA_DIR, POSTPROCESSED_DATA_DIR
+
+logger = get_logger(__name__)
 
 def read_raw_file(filepath):
     comments = []
@@ -66,18 +70,25 @@ def read_data_file(filepath, filetype=None):
     filetype: 'raw', 'processed', or None (auto-detect)
     Returns: (df, comments, metadata/header_cols, filetype)
     """
-    if filetype is None:
-        # Auto-detect: if file has #C, #I, #P, treat as raw
-        with open(filepath, 'r') as f:
-            head = f.read(4096)
-            if any(tag in head for tag in ['#C', '#I', '#P']):
-                filetype = 'raw'
-            else:
-                filetype = 'processed'
-    if filetype == 'raw':
-        print(f"Reading raw file: {filepath}")
-        df, comments, metadata = read_raw_file(filepath)
-        return df, comments, metadata, 'raw'
-    else:
-        df, comments, header_cols = read_processed_file(filepath)
-        return df, comments, header_cols, 'processed' 
+    logger.debug(f'Reading data file: {filepath}')
+    try:
+        if filetype is None:
+            # Auto-detect: if file has #C, #I, #P, treat as raw
+            with open(filepath, 'r') as f:
+                head = f.read(4096)
+                if any(tag in head for tag in ['#C', '#I', '#P']):
+                    filetype = 'raw'
+                else:
+                    filetype = 'processed'
+        if filetype == 'raw':
+            print(f"Reading raw file: {filepath}")
+            df, comments, metadata = read_raw_file(filepath)
+            logger.info(f'Successfully read raw file: {filepath}')
+            return df, comments, metadata, 'raw'
+        else:
+            df, comments, header_cols = read_processed_file(filepath)
+            logger.info(f'Successfully read processed file: {filepath}')
+            return df, comments, header_cols, 'processed'
+    except Exception as e:
+        logger.error(f'Error reading data file {filepath}: {e}')
+        raise e
