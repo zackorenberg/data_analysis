@@ -12,6 +12,7 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as Navigatio
 import matplotlib.pyplot as plt
 import numpy as np
 import json
+from gui.line_list_widget import LineListWidget
 
 
 class MainWindow(QMainWindow):
@@ -78,12 +79,14 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.plot_dock)
 
         # Plotted lines list dock
-        self.line_list = QListWidget()
-        self.line_list.setMaximumHeight(120)
-        self.line_list.itemClicked.connect(self.edit_line_params)
+        self.line_list_widget = LineListWidget()
+        self.line_list_widget.setMaximumHeight(120)
+        self.line_list_widget.showHideToggled.connect(self.toggle_line_visibility)
+        self.line_list_widget.removeRequested.connect(self.remove_plot_line)
+        self.line_list_widget.editRequested.connect(self.edit_line_params)
+        #self.line_list_widget.list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.lines_dock = QDockWidget("Plotted Lines", self)
-        self.lines_dock.setWidget(self.line_list)
-        self.lines_dock.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea | Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.lines_dock.setWidget(self.line_list_widget)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.lines_dock)
 
         # Parameter controls widget (already dockable)
@@ -240,31 +243,29 @@ class MainWindow(QMainWindow):
         
         line, = self.canvas.axes.plot(x, y, label=label, **plot_kwargs)
         self.canvas.set_line_style_and_color(line, params)
-        self.canvas.apply_plot_params(params) # Reapply global params
+        self.canvas.apply_plot_params(self.global_params) # Reapply global params
         self.canvas.figure.tight_layout()
         self.canvas.draw()
         line_info = {'file': file_path, 'params': params, 'line': line, 'comments': comments}
         self.plotted_lines.append(line_info)
-        item = QListWidgetItem(f"{os.path.basename(file_path)}: {params['y']} vs {params['x']}")
-        self.line_list.addItem(item)
-        item.setData(1000, len(self.plotted_lines) - 1)
+        self.line_list_widget.add_line(label, visible=True)
         self.clear_status_message()
 
-    def edit_line_params(self, item):
-        idx = item.data(1000)
-        line_info = self.plotted_lines[idx]
-        file_path = line_info['file']
-        params = line_info['params']
-        comments = line_info.get('comments', [])
-        try:
-            df, _, _, _ = read_data_file(file_path)
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Could not read file:\n{file_path}\n{e}")
-            return
-        columns = list(df.columns)
-        dialog = PlotParamDialog(columns, current_params=params, parent=self, comments=comments)
-        dialog.paramsSelected.connect(lambda new_params, fp=file_path, d=df, i=idx: self.update_plot_line(fp, d, new_params, i))
-        dialog.exec_()
+    def edit_line_params(self, idx):
+        if 0 <= idx < len(self.plotted_lines):
+            line_info = self.plotted_lines[idx]
+            file_path = line_info['file']
+            params = line_info['params']
+            comments = line_info.get('comments', [])
+            try:
+                df, _, _, _ = read_data_file(file_path)
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Could not read file:\n{file_path}\n{e}")
+                return
+            columns = list(df.columns)
+            dialog = PlotParamDialog(columns, current_params=params, parent=self, comments=comments)
+            dialog.paramsSelected.connect(lambda new_params, fp=file_path, d=df, idx=idx: self.update_plot_line(fp, d, new_params, idx))
+            dialog.exec_()
 
     def update_plot_line(self, file_path, df, params, idx):
         self.set_status_message("Updating plot line...")
@@ -317,7 +318,9 @@ class MainWindow(QMainWindow):
         else:
             line.set_label(f"{params['y']} vs {params['x']}")
         self.plotted_lines[idx]['params'] = params
-        self.canvas.set_line_style_and_color(line, params)
+        self.plotted_lines[idx]['line'] = line
+        # Update label in custom widget
+        self.line_list_widget.list_widget.itemWidget(self.line_list_widget.list_widget.item(idx)).layout().itemAt(1).widget().setText(line.get_label())
         self.canvas.axes.relim()
         self.canvas.apply_plot_params(self.global_params)
         self.canvas.figure.tight_layout()
@@ -342,8 +345,7 @@ class MainWindow(QMainWindow):
         params = self.canvas.get_plot_params()
         self.param_widget.update_fields_from_params(params)
 
-    def reset_plot_and_params(self):
-        self.set_status_message("Resetting plot and parameters...")
+    def redraw_plot(self):
         # Clear the axes
         self.canvas.axes.clear()
         # Replot all lines from self.plotted_lines
@@ -351,7 +353,8 @@ class MainWindow(QMainWindow):
             df = None
             try:
                 df, _, _, _ = read_data_file(line_info['file'])
-            except Exception:
+            except Exception as e:
+                print(f"Error reading file {line_info['file']}: {e}")
                 continue
             params = line_info['params']
             x = df[params['x']]
@@ -397,7 +400,13 @@ class MainWindow(QMainWindow):
             y = y[mask]
             label = params.get('legend', line_info['file'])
             line, = self.canvas.axes.plot(x, y, label=label)
+            line_info['line'] = line
             self.canvas.set_line_style_and_color(line, params)
+        
+    def reset_plot_and_params(self):
+        self.set_status_message("Resetting plot and parameters...")
+        # Redraw axis
+        self.redraw_plot()
         # Always show legend by default after reset
         self.canvas.apply_plot_params({'legend': True})
         self.canvas.figure.tight_layout()
@@ -551,7 +560,7 @@ class MainWindow(QMainWindow):
                 config = json.load(f)
             # Clear current plot
             self.canvas.axes.clear()
-            self.line_list.clear()
+            self.line_list_widget.clear()
             self.plotted_lines = []
             # Restore lines
             for line_info in config.get('plotted_lines', []):
@@ -583,6 +592,36 @@ class MainWindow(QMainWindow):
     
     def clear_status_message(self):
         self.statusBar.clearMessage()
+
+    def toggle_line_visibility(self, idx, visible):
+        if 0 <= idx < len(self.plotted_lines):
+            line = self.plotted_lines[idx]['line']
+            line.set_visible(visible)
+            self.canvas.draw()
+        else:
+            print(f"Error toggling line visibility: {idx} is out of range")
+
+    def remove_plot_line(self, idx):
+        if 0 <= idx < len(self.plotted_lines):
+            # Remove from axes
+            line = self.plotted_lines[idx]['line']
+            try:
+                line.remove()
+            except Exception as e:
+                print(f"Error removing line: {e}")
+            # Remove from data
+            self.plotted_lines.pop(idx)
+            self.line_list_widget.remove_line(idx)
+            self.redraw_plot()
+            self.canvas.apply_plot_params(self.global_params) # Reapply global params
+            self.canvas.figure.tight_layout()
+            self.canvas.draw()
+        else:
+            print(f"Error removing line: {idx} is out of range")
+
+    #def _on_item_double_clicked(self, item):
+    #    idx = self.line_list_widget.list_widget.row(item)
+    #    self.edit_line_params(idx)
 
 def main():
     app = QApplication(sys.argv)
