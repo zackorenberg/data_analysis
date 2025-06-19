@@ -47,6 +47,7 @@ class ProcessingDialog(QDialog):
                 if idx+1 < len(parts):
                     return parts[idx+1]
             except ValueError:
+                logger.warning(f"No {key} folder found in {file_path}")
                 continue
         return ''
 
@@ -73,6 +74,8 @@ class ProcessingDialog(QDialog):
         for p in self.BASE_PARAMETERS:
             if p[0] == 'prefix' and self.prefix_options:
                 name, label, typ, required, placeholder = ('prefix', 'Prefix', tuple(self.prefix_options), False, p[4])
+            elif p[0] == 'cooldown' and self.cooldown:
+                name, label, typ, required, placeholder = ('cooldown', 'Cooldown', 'label', False, self.cooldown)
             else:
                 name, label, typ, required, placeholder = p if len(p) == 5 else (*p, None)
             w = self._make_widget_for_type(typ, placeholder)
@@ -130,59 +133,220 @@ class ProcessingDialog(QDialog):
             if item is not None and item.widget() is not None:
                 item.widget().deleteLater()
         self.param_widgets.clear()
-        self.multi_param_widgets = {}  # base_name: [widgets]
-        self.multi_param_groups = {}   # base_name: groupbox
-        self.widget_to_varname = {}   # widget: varname for multi-groups
+        self.multi_param_widgets = {}
+        self.multi_param_groups = {}
+        self.widget_to_varname = {}
         if idx < 0 or idx >= len(self.modules):
             return
         _, cls, parameters = self.modules[idx]
         self.selected_module = cls
-        # Only use module-specific parameters here
-        self._build_param_form(parameters, self.form)
+        self._build_param_form(parameters, self.form, self.param_widgets, self.multi_param_widgets, self.multi_param_groups, self.widget_to_varname)
 
-    def _build_param_form(self, parameters, parent_layout, parent_base=None):
-        for param in parameters:
-            if isinstance(param, dict):
+
+    def _create_multi_groupbox_layout(self, add_funct, add_params, label=None):
+        super_group = QGroupBox()
+        if label:
+            super_group.setTitle(label)
+        super_layout = QVBoxLayout()
+        super_group.setLayout(super_layout)
+        add_fresh_btn = QPushButton("+")
+        super_layout.addWidget(add_fresh_btn)
+        def add_fresh_group(*args):
+            return lambda: add_funct(*args, parent_layout=super_layout)
+        add_fresh_btn.clicked.connect(add_fresh_group(*add_params))
+        return super_group, super_layout
+
+    def _build_param_form(self, param_defs, parent_layout, param_widgets, multi_param_widgets, multi_param_groups, widget_to_varname, parent_base=None):
+        for param in param_defs:
+            d = self._param_def_to_dict(param) if not isinstance(param, dict) else param
+            name, label, typ, required, placeholder = d['name'], d['label'], d['typ'], d['required'], d['placeholder']
+            required = bool(required) if required is not None else False
+            label = label if label is not None else base_name
+            rlabel = f"{label} *" if required else label
+            name = name if name is not None else ''
+            typ = typ if typ is not None else ''
+            placeholder = placeholder if placeholder is not None else ''
+            m = re.match(r'(.+)_%d$', name) if name else None
+            print(name, m)
+            # Multi-group (dict type)
+            if m and isinstance(typ, dict) and typ.get('type') == 'multi':
+                base_name = m.group(1)
+                if base_name not in multi_param_groups:
+                    multi_param_groups[base_name] = []
+                    super_group, super_layout = self._create_multi_groupbox_layout(self._add_multi_group, (base_name, label, typ['fields'], required), label=rlabel)
+                    
+                    self._add_multi_group(base_name, label, typ['fields'], required, super_layout)
+                    parent_layout.addRow(super_group)
                 continue
-            # Support placeholder as 5th element
-            if len(param) == 5:
-                name, label, typ, required, placeholder = param
-            else:
-                name, label, typ, required = param
-                placeholder = None
-            m = re.match(r'(.+)_%d$', name)
-            if m:
-                base_name = m.group(1) # if not parent_base else f"{parent_base}.{m.group(1)}"
-                if isinstance(typ, dict) and typ.get('type') == 'multi':
-                    if base_name not in self.multi_param_groups:
-                        self.multi_param_groups[base_name] = []
-                        self._add_multi_group(base_name, label, typ['fields'], required, parent_layout)
-                    continue
-                else:
-                    if base_name not in self.multi_param_widgets:
-                        self.multi_param_widgets[base_name] = []
-                        self._add_multi_param_row(base_name, label, typ, required, parent_layout)
-                    continue
+            # Multi-value (single type, not dict)
+            elif m:
+                logger.debug(f"Multi-value param: {name}")
+                base_name = m.group(1)
+                if base_name not in multi_param_widgets:
+                    multi_param_widgets[base_name] = []
+                    super_group, super_layout = self._create_multi_groupbox_layout(self._add_multi_param_row, (base_name, label, typ, required), label=rlabel)
+                    self._add_multi_param_row(base_name, label, typ, required, super_layout, is_first=True)
+                    parent_layout.addRow(super_group)
+                continue
+            # Standalone multi-group
             if isinstance(typ, dict) and typ.get('type') == 'multi':
                 base_name = name
-                if base_name not in self.multi_param_groups:
-                    self.multi_param_groups[base_name] = []
+                if base_name not in multi_param_groups:
+                    multi_param_groups[base_name] = []
                     self._add_multi_group(base_name, label, typ['fields'], required, parent_layout)
                 continue
             w = self._make_widget_for_type(typ, placeholder, required)
-            if placeholder and hasattr(w, 'setPlaceholderText') and typ not in ('label', 'checkbox'):
-                w.setPlaceholderText(str(placeholder))
-            if typ == 'checkbox' and placeholder:
-                w.setChecked(bool(placeholder))
-            parent_layout.addRow(label + (" *" if required else ""), w)
-            # Only add to param_widgets if not part of a multi/multi-group
+            label_text = label + (" *" if required else "")
+            parent_layout.addRow(label_text, w)
             if not parent_base:
-                self.param_widgets[name] = w
+                param_widgets[name] = w
             if parent_base:
-                self.widget_to_varname[w] = name
+                widget_to_varname[w] = name
+
+    def _add_multi_param_row(self, base_name, label, typ, required, parent_layout, insert_after=None, placeholder=None, is_first=False):
+        def add_row(after_idx=None):
+            w = self._make_widget_for_type(typ, placeholder, required)
+            row_layout = QHBoxLayout()
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            # Only the first row gets the label and plus button
+            """ we are using the other layout function instead of this, with the plus button on the bottom
+            if (is_first or (after_idx is not None and after_idx == 0)) and len(self.multi_param_widgets[base_name]) == 0:
+                label_layout = QHBoxLayout()
+                label_widget = QLabel(label + (" *" if required else ""))
+                plus_btn = QPushButton("+")
+                label_layout.addWidget(label_widget)
+                label_layout.addWidget(plus_btn)
+                label_container = QWidget()
+                label_container.setLayout(label_layout)
+                if type(parent_layout) == QFormLayout:
+                    parent_layout.insertRow(0, label_container)
+                else:
+                    parent_layout.insertWidget(0, label_container)
+
+                plus_btn.clicked.connect(lambda: add_row(len(self.multi_param_widgets[base_name])))
+            """
+            row_layout.addWidget(w)
+            
+            
+
+            minus_btn = QPushButton("–")
+            #row_layout.addWidget(minus_btn)
+            #""" this is buggy depending on the order you press the buttons
+            plus_btn = QPushButton("+")
+            row_layout.addWidget(plus_btn)
+            row_layout.addWidget(minus_btn)
+            #"""
+            minus_btn.clicked.connect(lambda: self._remove_multi_param_row(base_name, container, parent_layout, required))
+
+            container = QWidget()
+            container.setLayout(row_layout)
+
+            def find_next_row_lambda(base_name, container):
+                def find_next_row():
+                    for i, (w, cont) in enumerate(self.multi_param_widgets[base_name]):
+                        if cont == container:
+                            return i
+                    return None
+                return lambda: add_row(find_next_row())
+            
+            plus_btn.clicked.connect(find_next_row_lambda(base_name, container))
+            # Determine index for insertion
+            if after_idx is None:
+                idx = len(self.multi_param_widgets[base_name])
+            else:
+                idx = after_idx + 1
+            self.multi_param_widgets[base_name].insert(idx, (w, container))
+            if type(parent_layout) == QFormLayout:
+                parent_layout.insertRow(idx, container)
+            else:
+                parent_layout.insertWidget(idx, container)
+        add_row(insert_after)
+
+    def _remove_multi_param_row(self, base_name, container, parent_layout, required=False):
+        widgets = self.multi_param_widgets[base_name]
+        """ I believe this is handled later
+        if required and len(widgets) <= 1:
+            QMessageBox.warning(self, "Cannot Remove", "At least one value is required for this field.")
+            return
+        """
+        for i, (w, cont) in enumerate(widgets):
+            if cont == container:
+                if type(parent_layout) == QFormLayout:
+                    parent_layout.removeRow(cont)
+                else:
+                    parent_layout.removeWidget(cont)
+                cont.deleteLater()
+                widgets.pop(i)
+                break
+
+    def _add_multi_group(self, base_name, label, fields, required, parent_layout, insert_after=None):
+        def add_group(after_idx=None):
+            groupbox = QGroupBox()
+            vbox = QFormLayout()
+            groupbox.setLayout(vbox)
+            minus_btn = QPushButton("–")
+            plus_btn = QPushButton("+")
+            btn_layout = QHBoxLayout()
+            btn_layout.addWidget(plus_btn)
+            btn_layout.addWidget(minus_btn)
+            vbox.addRow(btn_layout)
+            # Recursively build subfields
+            self._build_param_form(fields, vbox, self.param_widgets, self.multi_param_widgets, self.multi_param_groups, self.widget_to_varname, parent_base=base_name)
+            # Determine index for insertion
+            if after_idx is None:
+                idx = len(self.multi_param_groups[base_name])
+            else:
+                idx = after_idx + 1
+            self.multi_param_groups[base_name].insert(idx, (groupbox, vbox))
+            label_text = f"{label} {idx+1}" + (" *" if required else "")
+            groupbox.setTitle(label_text)
+            if type(parent_layout) == QFormLayout:
+                parent_layout.insertRow(idx, groupbox)
+            else:
+                parent_layout.insertWidget(idx, groupbox)
+
+            def find_next_row_lambda(base_name, groupbox):
+                def find_next_row():
+                    for i, (gb, vbox) in enumerate(self.multi_param_groups[base_name]):
+                        if gb == groupbox:
+                            return i
+                    return None
+                return lambda: add_group(find_next_row())
+
+            #plus_btn.clicked.connect(lambda: add_group(idx))
+            plus_btn.clicked.connect(find_next_row_lambda(base_name, groupbox))
+            minus_btn.clicked.connect(lambda: self._remove_multi_group(base_name, groupbox, parent_layout, label, required))
+            self._update_multi_group_labels(base_name, parent_layout, label, required)
+            # For all widgets in vbox, track their varnames
+            """ I dont think this does anything
+            for subparam in fields:
+                subname, *_,= subparam
+                key = f"{base_name}.{subname}"
+                w = self.param_widgets.get(key)
+                if w:
+                    self.widget_to_varname[w] = subname
+            """
+        add_group(insert_after)
+
+    def _remove_multi_group(self, base_name, groupbox, parent_layout, label=None, required=None):
+        for i, (gb, vbox) in enumerate(self.multi_param_groups[base_name]):
+            if gb == groupbox:
+                if type(parent_layout) == QFormLayout:
+                    parent_layout.removeRow(gb)
+                else:
+                    parent_layout.removeWidget(gb)
+                self.multi_param_groups[base_name].pop(i)
+                gb.deleteLater()
+                break
+        
+        self._update_multi_group_labels(base_name, parent_layout, label=label, required=required)
+
+    def _update_multi_group_labels(self, base_name, parent_layout, label=None, required=None):
+        for idx, (gb, vbox) in enumerate(self.multi_param_groups[base_name]):
+            label_text = f"{label} {idx+1}" + (" *" if required else "")
+            gb.setTitle(label_text)
 
     def _make_widget_for_type(self, typ, placeholder=None, required=True):
-        # typ can be a tuple/list, 'dropdown_column', 'dropdown', etc.
         if isinstance(typ, (tuple, list)):
             w = QComboBox()
             if not required:
@@ -199,104 +363,11 @@ class ProcessingDialog(QDialog):
             w = QLabel(str(placeholder) if placeholder else '')
         else:
             w = QLineEdit()
+        if placeholder and hasattr(w, 'setPlaceholderText') and typ not in ('label', 'checkbox'):
+            w.setPlaceholderText(str(placeholder))
+        if typ == 'checkbox' and placeholder:
+            w.setChecked(bool(placeholder))
         return w
-
-
-    def _add_multi_param_row(self, base_name, label, typ, required, parent_layout, insert_after=None, placeholder=None):
-        def add_row(after_idx=None):
-            w = self._make_widget_for_type(typ, placeholder)
-            row_layout = QHBoxLayout()
-            row_layout.addWidget(w)
-            minus_btn = QPushButton("–")
-            plus_btn = QPushButton("+")
-            row_layout.addWidget(plus_btn)
-            row_layout.addWidget(minus_btn)
-            container = QWidget()
-            container.setLayout(row_layout)
-            # Determine index for insertion
-            if after_idx is None:
-                idx = len(self.multi_param_widgets[base_name])
-            else:
-                idx = after_idx + 1
-            # Insert in widgets list and layout
-            self.multi_param_widgets[base_name].insert(idx, (w, container))
-            # Insert in layout at correct position
-            label_text = f"{label} {idx+1}" + (" *" if required else "")
-            parent_layout.insertRow(idx, label_text, container)
-            # Connect buttons
-            plus_btn.clicked.connect(lambda: add_row(idx))
-            minus_btn.clicked.connect(lambda: self._remove_multi_param_row(base_name, container, parent_layout))
-            self._update_multi_param_labels(base_name, parent_layout, label, required)
-        add_row(insert_after)
-
-    def _remove_multi_param_row(self, base_name, container, parent_layout):
-        for i, (w, cont) in enumerate(self.multi_param_widgets[base_name]):
-            if cont == container:
-                parent_layout.removeRow(cont)
-                self.multi_param_widgets[base_name].pop(i)
-                break
-        self._update_multi_param_labels(base_name, parent_layout)
-
-    def _update_multi_param_labels(self, base_name, parent_layout, label=None, required=None):
-        # Update numbering for all rows
-        for idx, (w, cont) in enumerate(self.multi_param_widgets[base_name]):
-            row = parent_layout.getLayoutPosition(cont)[0]
-            if label is not None:
-                label_text = f"{label} {idx+1}" + (" *" if required else "")
-            else:
-                # Try to get label from the layout
-                label_text = parent_layout.itemAt(row, LabelRole).widget().text().split(' ')[0] + f" {idx+1}"
-            if parent_layout.itemAt(row, LabelRole) and parent_layout.itemAt(row, LabelRole).widget():
-                parent_layout.itemAt(row, LabelRole).widget().setText(label_text)
-
-    def _add_multi_group(self, base_name, label, fields, required, parent_layout, insert_after=None):
-        def add_group(after_idx=None):
-            groupbox = QGroupBox()
-            vbox = QFormLayout()
-            groupbox.setLayout(vbox)
-            minus_btn = QPushButton("–")
-            plus_btn = QPushButton("+")
-            btn_layout = QHBoxLayout()
-            btn_layout.addWidget(plus_btn)
-            btn_layout.addWidget(minus_btn)
-            vbox.addRow(btn_layout)
-            # Recursively build subfields
-            self._build_param_form(fields, vbox, parent_base=base_name)
-            # Determine index for insertion
-            if after_idx is None:
-                idx = len(self.multi_param_groups[base_name])
-            else:
-                idx = after_idx + 1
-            self.multi_param_groups[base_name].insert(idx, (groupbox, vbox))
-            label_text = f"{label} {idx+1}" + (" *" if required else "")
-            groupbox.setTitle(label_text)
-            parent_layout.insertRow(idx, groupbox)
-            plus_btn.clicked.connect(lambda: add_group(idx))
-            minus_btn.clicked.connect(lambda: self._remove_multi_group(base_name, groupbox, parent_layout, label))
-            self._update_multi_group_labels(base_name, parent_layout, label, required)
-            # For all widgets in vbox, track their varnames
-            """ I dont think this does anything
-            for subparam in fields:
-                subname, *_,= subparam
-                key = f"{base_name}.{subname}"
-                w = self.param_widgets.get(key)
-                if w:
-                    self.widget_to_varname[w] = subname
-            """
-        add_group(insert_after)
-
-    def _remove_multi_group(self, base_name, groupbox, parent_layout, label=None):
-        for i, (gb, vbox) in enumerate(self.multi_param_groups[base_name]):
-            if gb == groupbox:
-                parent_layout.removeRow(gb)
-                self.multi_param_groups[base_name].pop(i)
-                break
-        self._update_multi_group_labels(base_name, parent_layout, label=label)
-
-    def _update_multi_group_labels(self, base_name, parent_layout, label=None, required=None):
-        for idx, (gb, vbox) in enumerate(self.multi_param_groups[base_name]):
-            label_text = f"{label} {idx+1}" + (" *" if required else "")
-            gb.setTitle(label_text)
 
     def _get_widget_value(self, w, typ, placeholder=None):
         # Handle checkboxes
@@ -475,10 +546,10 @@ class ProcessingDialog(QDialog):
                 values = params.get(base_name, [])
                 # Get label, typ, required from param_defs
                 if base_name in param_defs_by_name:
-                    _, label, typ, required, placeholder = (*param_defs_by_name[base_name][:4], None) if len(param_defs_by_name[base_name]) == 4 else param_defs_by_name[base_name]
+                    _, label, typ, required = param_defs_by_name[base_name][:4]
                 else:
                     logger.warning(f"Base name {base_name} not found in param_defs")
-                    label, typ, required, placeholder = base_name, None, False, None
+                    label, typ, required = base_name, None, False
                 # Remove all but one row, then add as needed
                 while len(widgets) > 1:
                     _, cont = widgets[-1]
@@ -551,3 +622,12 @@ class ProcessingDialog(QDialog):
 
     def get_selected_module(self):
         return self.selected_module, self.params 
+
+    def _param_def_to_dict(self, param):
+        # Returns dict with keys: name, label, typ, required, placeholder
+        if len(param) == 5:
+            name, label, typ, required, placeholder = param
+        else:
+            name, label, typ, required = param
+            placeholder = None
+        return dict(name=name, label=label, typ=typ, required=required, placeholder=placeholder) 

@@ -714,6 +714,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "Processing Error", str(e))
         except Exception as e:
             QMessageBox.critical(self, "Dialog Error", str(e))
+            raise e
 
 def main():
     app = QApplication(sys.argv)

@@ -16,6 +16,7 @@ PARAMETERS = [
             ('expression', 'Expression', str, False, 'e.g. "(x-100)/100" or "*100"')
         ]
     }, True),
+    ('test_%d', 'Test', str, True),
     ('prepend_date', 'Prepend Prefix', 'checkbox', False, True),
     ('file_name', 'File Name', str, True),
     ('output_folder', 'Subfolder Folder Name', str, False),
