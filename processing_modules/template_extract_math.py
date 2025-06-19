@@ -13,10 +13,12 @@ PARAMETERS = [
         'type': 'multi',
         'fields': [
             ('colname', 'Column Name', 'dropdown_column', True),
-            ('expression', 'Expression', str, False)
+            ('expression', 'Expression', str, False, 'e.g. "(x-100)/100" or "*100"')
         ]
     }, True),
-    ('output_folder', 'Output Folder Name', str, True),
+    ('prepend_date', 'Prepend Prefix', 'checkbox', False, True),
+    ('file_name', 'File Name', str, True),
+    ('output_folder', 'Subfolder Folder Name', str, False),
 ]
 
 class ExtractColumnsWithMath(BaseProcessingModule):
@@ -64,14 +66,17 @@ class ExtractColumnsWithMath(BaseProcessingModule):
 
     def save(self):
         logger.debug(f"Saving processed columns for file: {self.input_file}")
-        output_folder = self.params['output_folder']
-        cooldown = self.get_cooldown_name()
-        outdir = os.path.join(self.output_dir, cooldown, output_folder)
-        os.makedirs(outdir, exist_ok=True)
-        outpath = os.path.join(outdir, f"{os.path.splitext(os.path.basename(self.input_file))[0]}_extracted.txt")
-        try:
-            self.save_data(self.result, outpath)
-            logger.info(f"Saved processed columns to {outpath}")
-        except Exception as e:
-            logger.error(f"Error saving processed columns to {outpath}: {e}")
-            raise 
+        prefix = self.params.get('prefix', '')
+        file_name = self.params.get('file_name', '')
+        output_folder = self.params.get('output_folder', '')
+        prepend_date = self.params.get('prepend_date', True)
+        base_name = file_name
+        if prepend_date and prefix:
+            base_name = f"{prefix}_{base_name}"
+        else:
+            base_name = f"{base_name}_extracted"
+        
+        filename = f"{base_name}.dat"
+        # Let the base module handle the output directory and cooldown
+        self.save_data(self.result, filename, comments=None, metadata=None, subfolder=output_folder)
+        logger.info(f"Saved processed columns to {filename}") 

@@ -125,6 +125,7 @@ class MainWindow(QMainWindow):
         # Connect file tree double-clicks
         self.raw_tree.doubleClicked.connect(lambda idx: self.handle_file_double_click(idx, 'raw'))
         self.post_tree.doubleClicked.connect(lambda idx: self.handle_file_double_click(idx, 'post'))
+        self.pre_tree.doubleClicked.connect(lambda idx: self.handle_file_double_click(idx, 'pre'))
 
         self.global_params = {}
 
@@ -188,8 +189,13 @@ class MainWindow(QMainWindow):
     def handle_file_double_click(self, index, tree_type):
         if tree_type == 'raw':
             model = self.raw_model
-        else:
+        elif tree_type == 'pre':
+            model = self.pre_model
+        elif tree_type == 'post':
             model = self.post_model
+        else:
+            logging.error(f"Invalid tree type: {tree_type}")
+            return
         file_path = model.filePath(index)
         if os.path.isdir(file_path):
             return
@@ -651,12 +657,23 @@ class MainWindow(QMainWindow):
         self.raw_tree.customContextMenuRequested.connect(lambda pos: self._show_file_context_menu(self.raw_tree, pos, 'raw'))
         self.post_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.post_tree.customContextMenuRequested.connect(lambda pos: self._show_file_context_menu(self.post_tree, pos, 'post'))
+        self.pre_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.pre_tree.customContextMenuRequested.connect(lambda pos: self._show_file_context_menu(self.pre_tree, pos, 'pre'))
 
     def _show_file_context_menu(self, tree, pos, tree_type):
         index = tree.indexAt(pos)
         if not index.isValid():
             return
         model = self.raw_model if tree_type == 'raw' else self.post_model
+        if tree_type == 'raw':
+            model = self.raw_model
+        elif tree_type == 'post':
+            model = self.post_model
+        elif tree_type == 'pre':
+            model = self.pre_model
+        else:
+            logging.error(f"Invalid tree type: {tree_type}")
+            return
         file_path = model.filePath(index)
         if os.path.isdir(file_path):
             return

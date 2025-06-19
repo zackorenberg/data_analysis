@@ -1,0 +1,18 @@
+{
+  "module": "template_extract_math",
+  "prefix": "250606",
+  "cooldown": "",
+  "prepend_date": true,
+  "file_name": "",
+  "output_folder": "",
+  "columns": [
+    {
+      "colname": "Magnetic Field Z(T)",
+      "expression": "*1e3"
+    },
+    {
+      "colname": "CBM302_X(V)",
+      "expression": "/100"
+    }
+  ]
+}

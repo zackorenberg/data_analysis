@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QFormLayout, QLineEdit, QPushButton, QLabel, QFileDialog, QMessageBox, QWidget, QGroupBox
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QFormLayout, QLineEdit, QPushButton, QLabel, QFileDialog, QMessageBox, QWidget, QGroupBox, QCheckBox, QFrame
 from PyQt5.QtCore import Qt
 import json
 import os
@@ -6,12 +6,21 @@ from DataManagement.module_loader import discover_modules
 from processing_base import BasePreprocessingModule, BasePostprocessingModule
 import re
 from localvars import PROCESSING_MODULES_DIR
+from logger import get_logger
+
+logger = get_logger(__name__)
+
 
 # FieldRole and LabelRole constants for QFormLayout
 FieldRole = 1  # QFormLayout.FieldRole
 LabelRole = 0  # QFormLayout.LabelRole
 
 class ProcessingDialog(QDialog):
+    BASE_PARAMETERS = [
+        # (name, label, type, required, placeholder)
+        ('prefix', 'Prefix', str, False, 'Optional prefix for output files'),
+        ('cooldown', 'Cooldown', 'label', False, ''),  # Will be set to cooldown name
+    ]
     def __init__(self, file_path, module_type='pre', data_columns=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Select Processing Module")
@@ -24,7 +33,28 @@ class ProcessingDialog(QDialog):
         self.multi_param_widgets = {}  # base_name: [widgets]
         self.multi_param_groups = {}   # base_name: groupbox
         self.widget_to_varname = {}   # widget: varname for multi-groups
+        # Extract cooldown from file_path
+        self.cooldown = self._extract_cooldown(file_path)
+        self.prefix_options = self._extract_prefix_options(file_path)
         self._init_ui()
+
+    def _extract_cooldown(self, file_path):
+        # Find the first folder after any of 'raw', 'preprocessed', or 'postprocessed' in the file path
+        parts = os.path.normpath(file_path).split(os.sep)
+        for key in ('raw', 'preprocessed', 'postprocessed'):
+            try:
+                idx = parts.index(key)
+                if idx+1 < len(parts):
+                    return parts[idx+1]
+            except ValueError:
+                continue
+        return ''
+
+    def _extract_prefix_options(self, file_path):
+        # If filename starts with 6 digits, treat as date prefix
+        fname = os.path.basename(file_path)
+        m = re.match(r'(\d{6})', fname)
+        return [m.group(1)] if m else []
 
     def _init_ui(self):
         layout = QVBoxLayout()
@@ -36,7 +66,33 @@ class ProcessingDialog(QDialog):
         self.module_combo.currentIndexChanged.connect(self._on_module_changed)
         layout.addWidget(module_label)
         layout.addWidget(self.module_combo)
-        # Parameter form
+
+        # --- Base parameters at the top ---
+        self.base_form = QFormLayout()
+        self.base_param_widgets = {}
+        for p in self.BASE_PARAMETERS:
+            if p[0] == 'prefix' and self.prefix_options:
+                name, label, typ, required, placeholder = ('prefix', 'Prefix', tuple(self.prefix_options), False, p[4])
+            else:
+                name, label, typ, required, placeholder = p if len(p) == 5 else (*p, None)
+            w = self._make_widget_for_type(typ, placeholder)
+            if placeholder and hasattr(w, 'setPlaceholderText') and typ not in ('label', 'checkbox'):
+                w.setPlaceholderText(str(placeholder))
+            if typ == 'checkbox' and placeholder:
+                w.setChecked(bool(placeholder))
+            self.base_form.addRow(label + (" *" if required else ""), w)
+            self.base_param_widgets[name] = w
+        base_group = QGroupBox("Global Parameters")
+        base_group.setLayout(self.base_form)
+        layout.addWidget(base_group)
+
+        # --- Separator ---
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep)
+
+        # --- Module-specific parameters ---
         self.form = QFormLayout()
         self.form_widget = QVBoxLayout()
         self.form_widget.addLayout(self.form)
@@ -81,16 +137,22 @@ class ProcessingDialog(QDialog):
             return
         _, cls, parameters = self.modules[idx]
         self.selected_module = cls
+        # Only use module-specific parameters here
         self._build_param_form(parameters, self.form)
 
     def _build_param_form(self, parameters, parent_layout, parent_base=None):
         for param in parameters:
             if isinstance(param, dict):
                 continue
-            name, label, typ, required = param
+            # Support placeholder as 5th element
+            if len(param) == 5:
+                name, label, typ, required, placeholder = param
+            else:
+                name, label, typ, required = param
+                placeholder = None
             m = re.match(r'(.+)_%d$', name)
             if m:
-                base_name = m.group(1) if not parent_base else f"{parent_base}.{m.group(1)}"
+                base_name = m.group(1) # if not parent_base else f"{parent_base}.{m.group(1)}"
                 if isinstance(typ, dict) and typ.get('type') == 'multi':
                     if base_name not in self.multi_param_groups:
                         self.multi_param_groups[base_name] = []
@@ -102,35 +164,47 @@ class ProcessingDialog(QDialog):
                         self._add_multi_param_row(base_name, label, typ, required, parent_layout)
                     continue
             if isinstance(typ, dict) and typ.get('type') == 'multi':
-                base_name = name if not parent_base else f"{parent_base}.{name}"
+                base_name = name
                 if base_name not in self.multi_param_groups:
                     self.multi_param_groups[base_name] = []
                     self._add_multi_group(base_name, label, typ['fields'], required, parent_layout)
                 continue
-            w = self._make_widget_for_type(typ)
+            w = self._make_widget_for_type(typ, placeholder, required)
+            if placeholder and hasattr(w, 'setPlaceholderText') and typ not in ('label', 'checkbox'):
+                w.setPlaceholderText(str(placeholder))
+            if typ == 'checkbox' and placeholder:
+                w.setChecked(bool(placeholder))
             parent_layout.addRow(label + (" *" if required else ""), w)
-            self.param_widgets[name if not parent_base else f"{parent_base}.{name}"] = w
-            # For multi-groups, track varname for widgets
+            # Only add to param_widgets if not part of a multi/multi-group
+            if not parent_base:
+                self.param_widgets[name] = w
             if parent_base:
                 self.widget_to_varname[w] = name
 
-    def _make_widget_for_type(self, typ):
+    def _make_widget_for_type(self, typ, placeholder=None, required=True):
+        # typ can be a tuple/list, 'dropdown_column', 'dropdown', etc.
         if isinstance(typ, (tuple, list)):
             w = QComboBox()
+            if not required:
+                w.addItem("")
             w.addItems([str(v) for v in typ])
-        elif typ == 'dropdown_column':
+        elif typ == 'dropdown_column' or typ == 'dropdown':
             w = QComboBox()
+            if not required:
+                w.addItem("")
             w.addItems(self.data_columns)
-        elif typ == 'dropdown':
-            w = QComboBox()
-            w.addItems(self.data_columns)
+        elif typ == 'checkbox':
+            w = QCheckBox()
+        elif typ == 'label':
+            w = QLabel(str(placeholder) if placeholder else '')
         else:
             w = QLineEdit()
         return w
 
-    def _add_multi_param_row(self, base_name, label, typ, required, parent_layout, insert_after=None):
+
+    def _add_multi_param_row(self, base_name, label, typ, required, parent_layout, insert_after=None, placeholder=None):
         def add_row(after_idx=None):
-            w = self._make_widget_for_type(typ)
+            w = self._make_widget_for_type(typ, placeholder)
             row_layout = QHBoxLayout()
             row_layout.addWidget(w)
             minus_btn = QPushButton("–")
@@ -198,48 +272,100 @@ class ProcessingDialog(QDialog):
             groupbox.setTitle(label_text)
             parent_layout.insertRow(idx, groupbox)
             plus_btn.clicked.connect(lambda: add_group(idx))
-            minus_btn.clicked.connect(lambda: self._remove_multi_group(base_name, groupbox, parent_layout))
+            minus_btn.clicked.connect(lambda: self._remove_multi_group(base_name, groupbox, parent_layout, label))
             self._update_multi_group_labels(base_name, parent_layout, label, required)
             # For all widgets in vbox, track their varnames
+            """ I dont think this does anything
             for subparam in fields:
-                subname, _, _, _ = subparam
+                subname, *_,= subparam
                 key = f"{base_name}.{subname}"
                 w = self.param_widgets.get(key)
                 if w:
                     self.widget_to_varname[w] = subname
+            """
         add_group(insert_after)
 
-    def _remove_multi_group(self, base_name, groupbox, parent_layout):
+    def _remove_multi_group(self, base_name, groupbox, parent_layout, label=None):
         for i, (gb, vbox) in enumerate(self.multi_param_groups[base_name]):
             if gb == groupbox:
                 parent_layout.removeRow(gb)
                 self.multi_param_groups[base_name].pop(i)
                 break
-        self._update_multi_group_labels(base_name, parent_layout)
+        self._update_multi_group_labels(base_name, parent_layout, label=label)
 
     def _update_multi_group_labels(self, base_name, parent_layout, label=None, required=None):
         for idx, (gb, vbox) in enumerate(self.multi_param_groups[base_name]):
             label_text = f"{label} {idx+1}" + (" *" if required else "")
             gb.setTitle(label_text)
 
-    def get_params(self):
+    def _get_widget_value(self, w, typ, placeholder=None):
+        # Handle checkboxes
+        if isinstance(w, QCheckBox):
+            return w.isChecked()
+        # Handle labels
+        if isinstance(w, QLabel):
+            return w.text() if w.text() else (placeholder if placeholder else '')
+        # Handle combo boxes
+        if isinstance(w, QComboBox):
+            return w.currentText()
+        # Handle line edits
+        if isinstance(w, QLineEdit):
+            val = w.text()
+            # Try to convert to the correct type if typ is a type
+            if isinstance(typ, type) and typ is not str:
+                try:
+                    return typ(val)
+                except Exception as e:
+                    logger.warning(f"Error converting value to type {typ}: {e}")
+                    return val
+            return val
+        # Fallback
+        if hasattr(w, 'text'):
+            logger.warning(f"Widget hit fallback {w} has text: {w.text()}")
+            return w.text()
+        return placeholder if placeholder else ''
+    
+    
+    def _set_widget_value(self, w, value):
+        if isinstance(w, QComboBox):
+            idx = w.findText(value)
+            if idx >= 0:
+                w.setCurrentIndex(idx)
+        elif isinstance(w, QCheckBox):
+            w.setChecked(value)
+        elif isinstance(w, QLineEdit):
+            w.setText(value)
+        elif isinstance(w, QLabel):
+            w.setText(value)
+        else:
+            logger.warning(f"Widget hit fallback {w} has text: {w.text()}")
+            w.setText(value)
+
+    def _collect_param_form(self, param_widgets, multi_param_widgets, multi_param_groups):
         params = {}
-        idx = self.module_combo.currentIndex()
-        _, _, parameters = self.modules[idx]
-        # Handle multi-value params
-        for base_name, widgets in getattr(self, 'multi_param_widgets', {}).items():
+        # Single-value params
+        for name, w in param_widgets.items():
+            # Skip base params if present
+            if hasattr(self, 'base_param_widgets') and name in self.base_param_widgets:
+                logger.warning(f"Skipping parameter: {name}, already exists as base parameter")
+                continue
+            typ = None
+            placeholder = None
+            print(name)
+            params[name] = self._get_widget_value(w, typ, placeholder)
+        # Multi-value params
+        for base_name, widgets in multi_param_widgets.items():
             values = []
             for w, _ in widgets:
-                val = w.currentText() if isinstance(w, QComboBox) else w.text()
-                if val:
-                    values.append(val)
+                v = self._get_widget_value(w, None)
+                if v != "":
+                    values.append(v)
             params[base_name] = values
-        # Handle multi-groups
-        for base_name, groups in getattr(self, 'multi_param_groups', {}).items():
+        # Multi-group params
+        for base_name, groups in multi_param_groups.items():
             group_values = []
             for groupbox, vbox in groups:
                 group_params = {}
-                # Find all widgets in this group
                 for i in range(vbox.rowCount()):
                     item = vbox.itemAt(i, FieldRole)
                     if item is not None and item.widget() is not None:
@@ -247,33 +373,67 @@ class ProcessingDialog(QDialog):
                         varname = self.widget_to_varname.get(w)
                         if not varname:
                             continue
-                        if isinstance(w, QComboBox):
-                            val = w.currentText()
-                        else:
-                            val = w.text()
-                        if val:
-                            group_params[varname] = val
-                group_values.append(group_params)
+                        v = self._get_widget_value(w, None)
+                        if v != "":
+                            group_params[varname] = v
+                if len(group_params.keys()):
+                    group_values.append(group_params)
             params[base_name] = group_values
-        # Handle regular params
-        for name, label, typ, required in parameters:
-            m = re.match(r'(.+)_%d$', name)
-            if m:
-                continue  # already handled
-            if isinstance(typ, dict) and typ.get('type') == 'multi':
-                continue  # already handled
-            key = name
-            w = self.param_widgets.get(key)
-            if not w:
-                continue
-            if typ == 'dropdown' or typ == 'dropdown_column' or isinstance(typ, (tuple, list)):
-                val = w.currentText()
-            else:
-                val = w.text()
-            if required and not val:
-                raise ValueError(f"Parameter '{label}' is required.")
-            params[key] = val
         return params
+
+    def get_params(self, includeBaseParams=True):
+        params = {}
+        # Collect base params
+        if includeBaseParams:
+            for name, w in self.base_param_widgets.items():
+                typ = None
+                for p in self.BASE_PARAMETERS:
+                    if p[0] == name:
+                        typ = p[2]
+                        placeholder = p[4] if len(p) == 5 else None
+                        break
+                params[name] = self._get_widget_value(w, typ, placeholder)
+        # Collect module-specific params
+        params.update(self._collect_param_form(self.param_widgets, self.multi_param_widgets, self.multi_param_groups))
+        return params
+
+    def _validate_required_fields(self, params):
+        # Validate base params
+        for p in self.BASE_PARAMETERS:
+            name, label, typ, required = p[:4]
+            if required:
+                val = params.get(name, None)
+                if val is None or val == "" or (isinstance(val, bool) and not val):
+                    raise ValueError(f"Required parameter '{label}' is missing.")
+        # Validate module params
+        _, _, param_defs = self.modules[self.module_combo.currentIndex()]
+        param_defs_by_name = {p[0].split('_%d')[0]: p for p in param_defs if not isinstance(p, dict)}
+        # Single-value
+        for name, w in self.param_widgets.items():
+            if hasattr(self, 'base_param_widgets') and name in self.base_param_widgets:
+                continue
+            if name in param_defs_by_name:
+                _, label, typ, required = param_defs_by_name[name][:4]
+                if required:
+                    val = params.get(name, None)
+                    if val is None or val == "" or (isinstance(val, bool) and not val):
+                        raise ValueError(f"Required parameter '{label}' is missing.")
+        # Multi-value
+        for base_name, widgets in self.multi_param_widgets.items():
+            if base_name in param_defs_by_name:
+                _, label, typ, required = param_defs_by_name[base_name][:4]
+                if required:
+                    values = params.get(base_name, [])
+                    if not values:
+                        raise ValueError(f"At least one value required for '{label}'.")
+        # Multi-group
+        for base_name, groups in self.multi_param_groups.items():
+            if base_name in param_defs_by_name:
+                _, label, typ, required = param_defs_by_name[base_name][:4]
+                if required:
+                    group_values = params.get(base_name, [])
+                    if not group_values:
+                        raise ValueError(f"At least one group required for '{label}'.")
 
     def import_params(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Import Parameters", "", "JSON Files (*.json)")
@@ -282,22 +442,92 @@ class ProcessingDialog(QDialog):
         try:
             with open(file_path, 'r') as f:
                 params = json.load(f)
+            # Check for module key
+            module_name = params.get('module', None)
+            if module_name is None:
+                QMessageBox.warning(self, "Import Error", "No module specified in parameter file.")
+                logger.warning("No module specified in parameter file.")
+                return
+            # Find module index
+            module_names = [name for name, _, _ in self.modules]
+            if module_name not in module_names:
+                QMessageBox.warning(self, "Import Error", f"Module '{module_name}' not found.")
+                logger.warning(f"Module '{module_name}' not found.")
+                return
+            idx = module_names.index(module_name)
+            self.module_combo.setCurrentIndex(idx)
+            # This will update the form to the correct module
+            # Remove 'module' key from params for the rest
+            # TODO: Test if it actually changes and updates the form
+            params = {k: v for k, v in params.items() if k != 'module'}
+            # Single-value params
             for name, w in self.param_widgets.items():
                 if name in params:
-                    if isinstance(w, QComboBox):
-                        idx = w.findText(params[name])
-                        if idx >= 0:
-                            w.setCurrentIndex(idx)
-                    else:
-                        w.setText(str(params[name]))
+                    self._set_widget_value(w, params[name])
+                    
+            # Get parameter definitions for the current module
+            _, _, param_defs = self.modules[self.module_combo.currentIndex()]
+            print(param_defs)
+            # can do re.match(r'(.+)_%d$', p[0]).group(1) instead of split()[0]
+            param_defs_by_name = {p[0].split('_%d')[0]: p for p in param_defs if not isinstance(p, dict)}
+            # Multi-value params
+            for base_name, widgets in self.multi_param_widgets.items():
+                values = params.get(base_name, [])
+                # Get label, typ, required from param_defs
+                if base_name in param_defs_by_name:
+                    _, label, typ, required, placeholder = (*param_defs_by_name[base_name][:4], None) if len(param_defs_by_name[base_name]) == 4 else param_defs_by_name[base_name]
+                else:
+                    logger.warning(f"Base name {base_name} not found in param_defs")
+                    label, typ, required, placeholder = base_name, None, False, None
+                # Remove all but one row, then add as needed
+                while len(widgets) > 1:
+                    _, cont = widgets[-1]
+                    self._remove_multi_param_row(base_name, cont, self.form)
+                for i, v in enumerate(values):
+                    if i >= len(self.multi_param_widgets[base_name]):
+                        self._add_multi_param_row(base_name, label, typ, required, self.form)
+                    w, _ = self.multi_param_widgets[base_name][i]
+                    self._set_widget_value(w, v)
+            # Multi-group params
+            for base_name, groups in self.multi_param_groups.items():
+                group_values = params.get(base_name, [])
+                # Get label, fields, required from param_defs
+                if base_name in param_defs_by_name:
+                    _, label, typ, required = param_defs_by_name[base_name][:4]
+                    fields = typ['fields'] if isinstance(typ, dict) and 'fields' in typ else []
+                else:
+                    logger.warning(f"Multi-group base name {base_name} not found in param_defs")
+                    label, fields, required = base_name, [], False
+                # Remove all but one group, then add as needed
+                while len(groups) > 1:
+                    gb, _ = groups[-1]
+                    self._remove_multi_group(base_name, gb, self.form)
+                for i, group_dict in enumerate(group_values):
+                    if i >= len(self.multi_param_groups[base_name]):
+                        self._add_multi_group(base_name, label, fields, required, self.form)
+                    groupbox, vbox = self.multi_param_groups[base_name][i]
+                    for j in range(vbox.rowCount()):
+                        item = vbox.itemAt(j, FieldRole)
+                        if item is not None and item.widget() is not None:
+                            # Todo: make this work for any type of widget
+                            w = item.widget()
+                            varname = self.widget_to_varname.get(w)
+                            if varname and varname in group_dict:
+                                val = group_dict[varname]
+                                self._set_widget_value(w, val)
         except Exception as e:
             QMessageBox.warning(self, "Import Error", str(e))
+            logger.warning(f"Import Error: {e}")
 
     def export_params(self):
         try:
-            params = self.get_params()
+            params = self.get_params(includeBaseParams=False) # excluse base parameters
+            # Add module name
+            module_name = self.modules[self.module_combo.currentIndex()][0]
+            params = {'module': module_name, **params}
         except Exception as e:
             QMessageBox.warning(self, "Export Error", str(e))
+            logger.warning(f"Export Error: {e}")
             return
         file_path, _ = QFileDialog.getSaveFileName(self, "Export Parameters", "params.json", "JSON Files (*.json)")
         if not file_path:
@@ -307,10 +537,14 @@ class ProcessingDialog(QDialog):
                 json.dump(params, f, indent=2)
         except Exception as e:
             QMessageBox.warning(self, "Export Error", str(e))
+            logger.warning(f"Export Error: {e}")
 
     def accept(self):
         try:
             self.params = self.get_params()
+            # cooldown is not user-editable, but always included in params
+            self.params['cooldown'] = self.cooldown
+            self._validate_required_fields(self.params)
             super().accept()
         except Exception as e:
             QMessageBox.warning(self, "Parameter Error", str(e))

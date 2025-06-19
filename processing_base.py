@@ -32,8 +32,16 @@ class BaseProcessingModule(ABC):
         pass
 
     def get_cooldown_name(self):
-        """Extract cooldown name from input_file path."""
-        return os.path.basename(os.path.dirname(self.input_file))
+        """Extract cooldown name as the first folder after 'raw', 'preprocessed', or 'postprocessed' in the input_file path."""
+        parts = os.path.normpath(self.input_file).split(os.sep)
+        for key in ('raw', 'preprocessed', 'postprocessed'):
+            try:
+                idx = parts.index(key)
+                if idx+1 < len(parts):
+                    return parts[idx+1]
+            except ValueError:
+                continue
+        return ''
 
     def get_output_path(self, filename: str) -> str:
         """Get full output path in the output_dir/cooldown folder."""
@@ -42,9 +50,14 @@ class BaseProcessingModule(ABC):
         os.makedirs(outdir, exist_ok=True)
         return os.path.join(outdir, filename)
 
-    def save_data(self, df, filepath, comments=None, metadata=None):
+    def save_data(self, df, filename, comments=None, metadata=None, subfolder=None):
         """Save data using the standard format (calls data_writer.save_data_file)."""
-        save_data_file(df, filepath, comments=comments, metadata=metadata)
+        # Use cooldown from params if present, else use get_cooldown_name()
+        cooldown = self.params.get('cooldown', self.get_cooldown_name())
+        outdir = os.path.join(self.output_dir, cooldown, subfolder) if subfolder else os.path.join(self.output_dir, cooldown)
+        os.makedirs(outdir, exist_ok=True)
+        outpath = os.path.join(outdir, filename)
+        save_data_file(df, outpath, comments=comments, metadata=metadata)
 
 class BasePreprocessingModule(BaseProcessingModule):
     """
