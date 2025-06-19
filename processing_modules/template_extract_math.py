@@ -47,6 +47,7 @@ class ExtractColumnsWithMath(BaseProcessingModule):
                 logger.error(f"Column '{colname}' not found in input data.")
                 raise ValueError(f"Column '{colname}' not found in input data.")
             x = self.data[colname]
+            collabel = entry.get('collabel', None)
             if expr:
                 # Safe eval: only allow numpy and x
                 np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
@@ -57,9 +58,10 @@ class ExtractColumnsWithMath(BaseProcessingModule):
                 except Exception as e:
                     logger.error(f"Error evaluating expression '{expr}' for column '{colname}': {e}")
                     raise ValueError(f"Error evaluating expression '{expr}' for column '{colname}': {e}")
-                result[colname + (expr if expr else '')] = y
+                
+                result[collabel if collabel else colname + (expr if expr else '')] = y
             else:
-                result[colname] = x
+                result[collabel if collabel else colname] = x
         self.result = result
 
     def save(self):

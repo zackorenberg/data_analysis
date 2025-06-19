@@ -13,4 +13,7 @@ PROCESSING_MODULES_DIR = 'processing_modules'
 DEFAULT_PLOT_CONFIG = 'plot_config.json'
 DEFAULT_PLOT_SAVE = os.path.join(PLOTS_DIR, 'plot.pdf')
 
+# Reading/writing data file formats
+DATA_DELIMITER = '  '
+
 # Any other constants can be added here 

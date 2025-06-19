@@ -24,7 +24,7 @@ def save_data_file(df, filepath, comments=None, metadata=None):
     if metadata and 'start_time' in metadata:
         lines.append(f"#T {metadata['start_time']}")
     # Header for columns
-    lines.append('  '.join(str(col) for col in df.columns))
+    lines.append('#' + '  '.join(f"'{str(col)}'" for col in df.columns))
     # Data
     data_str = '\n'.join('  '.join(map(str, row)) for row in df.values)
     lines.append(data_str)

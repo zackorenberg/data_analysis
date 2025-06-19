@@ -1,17 +1,20 @@
 {
   "module": "template_extract_math",
-  "prefix": "250606",
-  "cooldown": "",
   "prepend_date": true,
-  "file_name": "",
+  "file_name": "CBMTest",
   "output_folder": "",
+  "test": [
+    "t"
+  ],
   "columns": [
     {
-      "colname": "Magnetic Field Z(T)",
+      "colname": "dt(s)",
+      "collabel": "B (mT)",
       "expression": "*1e3"
     },
     {
       "colname": "CBM302_X(V)",
+      "collabel": "V (V)",
       "expression": "/100"
     }
   ]

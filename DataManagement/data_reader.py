@@ -1,11 +1,14 @@
 import pandas as pd
 import re
 from logger import get_logger
-from localvars import RAW_DATA_DIR, POSTPROCESSED_DATA_DIR
+from localvars import RAW_DATA_DIR, POSTPROCESSED_DATA_DIR, DATA_DELIMITER
 
 logger = get_logger(__name__)
 
 def read_raw_file(filepath):
+    """
+    Note: This function is designed for use with LabGUI data files. Any other data file formats need to be custom coded here
+    """
     comments = []
     metadata = {'channels': [], 'instruments': [], 'units': [], 'start_time': None}
     data_start = 0
@@ -15,23 +18,41 @@ def read_raw_file(filepath):
             if not line.startswith('#'):
                 data_start = i
                 break
-            comments.append(line.strip())
-            if line.startswith("#C"):
+            
+            if line.startswith("#C'"):
                 # Channel names
                 chs = re.findall(r"'([^']+)'", line)
-                metadata['channels'].extend(chs)
-                channel_names = chs
-            elif line.startswith("#I"):
+                if len(chs):
+                    metadata['channels'].extend(chs)
+                    channel_names = chs
+                    continue
+            elif line.startswith("#I'"):
                 # Instruments
                 insts = re.findall(r"'([^']+)'", line)
-                metadata['instruments'].extend(insts)
-            elif line.startswith("#P"):
+                if len(insts):
+                    metadata['instruments'].extend(insts)
+                    continue
+            elif line.startswith("#P'"):
                 # Units
                 units = re.findall(r"'([^']+)'", line)
-                metadata['units'].extend(units)
-            elif line.startswith("#T"):
+                if len(units):
+                    metadata['units'].extend(units)
+                    continue
+            elif line.startswith("#T'"):
                 # Start time
-                metadata['start_time'] = line[2:].strip()
+                try:
+                    start_time = re.findall(r"'([^']+)'", line)
+                    if len(start_time) == 1:
+                        #metadata['start_time'] = float(line[2:].strip().strip('\''))
+                        metadata['start_time'] = float(start_time[0])
+                        continue
+                except Exception as e:
+                    logger.warning(f"Could not parse start time from line: {line}") # Must be a comment then
+                    print(e)
+            
+            
+            comments.append(line[1:].strip()) # remove the #
+            
     # Read data
     if channel_names:
         # Count columns in first data row
@@ -42,11 +63,11 @@ def read_raw_file(filepath):
             ncols = len(first_data_line.split())
         use_names = [str(name) for name in channel_names[:ncols]]
         if use_names:
-            df = pd.read_csv(filepath, comment='#', skiprows=data_start, delim_whitespace=True, names=use_names)
+            df = pd.read_csv(filepath, comment='#', skiprows=data_start, sep=DATA_DELIMITER, names=use_names)
         else:
-            df = pd.read_csv(filepath, comment='#', skiprows=data_start, delim_whitespace=True)
+            df = pd.read_csv(filepath, comment='#', skiprows=data_start, sep=DATA_DELIMITER)
     else:
-        df = pd.read_csv(filepath, comment='#', skiprows=data_start, delim_whitespace=True)
+        df = pd.read_csv(filepath, comment='#', skiprows=data_start, sep=DATA_DELIMITER)
     return df, comments, metadata
 
 def read_processed_file(filepath):
@@ -59,10 +80,13 @@ def read_processed_file(filepath):
                 data_start = i
                 break
             comments.append(line.strip())
-            if line.startswith('#T') or line.startswith('#'):
-                # Header columns (e.g. #T B R U V)
-                header_cols = line[1:].strip().split()
-    df = pd.read_csv(filepath, comment='#', skiprows=data_start, delim_whitespace=True, names=header_cols if header_cols else None)
+            if line.startswith('#'): # The last line of the comments should conain the header labels
+                # Header columns (e.g. # 'T' 'B' 'R' 'U' 'V')
+                header_cols = re.findall(r"'([^']+)'", line) # If using quotes, this will work
+                if not len(header_cols): # If re could not match any quotes, we try without quotes
+                    header_cols = [x.strip('\'"') for x in line[1:].strip().split(DATA_DELIMITER if DATA_DELIMITER != '\s+' else ' ') if x]
+                
+    df = pd.read_csv(filepath, comment='#', skiprows=data_start, sep=DATA_DELIMITER, names=header_cols if header_cols else None)
     return df, comments, header_cols
 
 def read_data_file(filepath, filetype=None):
@@ -81,7 +105,7 @@ def read_data_file(filepath, filetype=None):
                 else:
                     filetype = 'processed'
         if filetype == 'raw':
-            print(f"Reading raw file: {filepath}")
+            logger.debug(f"Reading raw file: {filepath}")
             df, comments, metadata = read_raw_file(filepath)
             logger.info(f'Successfully read raw file: {filepath}')
             return df, comments, metadata, 'raw'
