@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QFormLayout, QLineEdit, QPushButton, QLabel, QFileDialog, QMessageBox, QWidget, QGroupBox, QCheckBox, QFrame
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QFormLayout, QLineEdit, QPushButton, QLabel, QFileDialog, QMessageBox, QWidget, QGroupBox, QCheckBox, QFrame, QLayout
 from PyQt5.QtCore import Qt
 import json
 import os
@@ -118,6 +118,7 @@ class ProcessingDialog(QDialog):
         ok_cancel.addWidget(ok_btn)
         ok_cancel.addWidget(cancel_btn)
         layout.addLayout(ok_cancel)
+        layout.setSizeConstraint(QLayout.SetFixedSize)
         self.setLayout(layout)
         self._on_module_changed(0)
 
@@ -167,7 +168,6 @@ class ProcessingDialog(QDialog):
             typ = typ if typ is not None else ''
             placeholder = placeholder if placeholder is not None else ''
             m = re.match(r'(.+)_%d$', name) if name else None
-            print(name, m)
             # Multi-group (dict type)
             if m and isinstance(typ, dict) and typ.get('type') == 'multi':
                 base_name = m.group(1)
@@ -422,7 +422,6 @@ class ProcessingDialog(QDialog):
                 continue
             typ = None
             placeholder = None
-            print(name)
             params[name] = self._get_widget_value(w, typ, placeholder)
         # Multi-value params
         for base_name, widgets in multi_param_widgets.items():
@@ -538,7 +537,6 @@ class ProcessingDialog(QDialog):
                     
             # Get parameter definitions for the current module
             _, _, param_defs = self.modules[self.module_combo.currentIndex()]
-            print(param_defs)
             # can do re.match(r'(.+)_%d$', p[0]).group(1) instead of split()[0]
             param_defs_by_name = {p[0].split('_%d')[0]: p for p in param_defs if not isinstance(p, dict)}
             # Multi-value params
@@ -621,7 +619,15 @@ class ProcessingDialog(QDialog):
             QMessageBox.warning(self, "Parameter Error", str(e))
 
     def get_selected_module(self):
-        return self.selected_module, self.params 
+        return self.get_selected_module_name(), self.selected_module, self.params 
+    
+    def get_selected_module_name(self):
+        name, cls, _ = self.modules[self.module_combo.currentIndex()]
+        if cls == self.selected_module:
+            return name
+        else:
+            logger.warning(f"Selected module {self.selected_module} does not match module {name}")
+            return None
 
     def _param_def_to_dict(self, param):
         # Returns dict with keys: name, label, typ, required, placeholder

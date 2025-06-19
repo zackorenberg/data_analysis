@@ -13,6 +13,7 @@ PARAMETERS = [
         'type': 'multi',
         'fields': [
             ('colname', 'Column Name', 'dropdown_column', True),
+            ('collabel', 'Column Label', str, False),
             ('expression', 'Expression', str, False, 'e.g. "(x-100)/100" or "*100"')
         ]
     }, True),
@@ -29,10 +30,6 @@ class ExtractColumnsWithMath(BaseProcessingModule):
         super().__init__(input_file, output_dir, params)
         self.data = data  # DataFrame supplied by GUI
 
-        print(input_file)
-        print(output_dir)
-        print(params)
-        print(data)
 
     def load(self):
         pass  # Data is already loaded and supplied

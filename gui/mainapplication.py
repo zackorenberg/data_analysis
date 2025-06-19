@@ -223,7 +223,7 @@ class MainWindow(QMainWindow):
             try:
                 x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
             except Exception as e:
-                print(f"X calculation error: {params['calc_x']}: {e}")
+                logger.error(f"X calculation error: {params['calc_x']}: {e}")
         # Calculation for y
         if 'calc_y' in params:
             np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
@@ -232,7 +232,7 @@ class MainWindow(QMainWindow):
             try:
                 y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
             except Exception as e:
-                print(f"Y calculation error: {params['calc_y']}: {e}")
+                logger.error(f"Y calculation error: {params['calc_y']}: {e}")
         mask = np.ones(len(x), dtype=bool)
         if 'minx' in params:
             mask &= x >= float(params['minx'])
@@ -252,7 +252,7 @@ class MainWindow(QMainWindow):
                     mask_expr = eval(expr, {"__builtins__": {}}, local_env)
                     mask &= mask_expr
                 except Exception as e:
-                    print(f"Mask expression error: {expr}: {e}")
+                    logger.error(f"Mask expression error: {expr}: {e}")
         x = x[mask]
         y = y[mask]
         if 'legend' in params:
@@ -309,7 +309,7 @@ class MainWindow(QMainWindow):
             try:
                 x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
             except Exception as e:
-                print(f"X calculation error: {params['calc_x']}: {e}")
+                logger.error(f"X calculation error: {params['calc_x']}: {e}")
         # Calculation for y
         if 'calc_y' in params:
             np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
@@ -318,7 +318,7 @@ class MainWindow(QMainWindow):
             try:
                 y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
             except Exception as e:
-                print(f"Y calculation error: {params['calc_y']}: {e}")
+                logger.error(f"Y calculation error: {params['calc_y']}: {e}")
         mask = np.ones(len(x), dtype=bool)
         if 'minx' in params:
             mask &= x >= float(params['minx'])
@@ -337,7 +337,7 @@ class MainWindow(QMainWindow):
                     mask_expr = eval(expr, {"__builtins__": {}}, local_env)
                     mask &= mask_expr
                 except Exception as e:
-                    print(f"Mask expression error: {expr}: {e}")
+                    logger.error(f"Mask expression error: {expr}: {e}")
         x = x[mask]
         y = y[mask]
         line = self.plotted_lines[idx]['line']
@@ -396,7 +396,7 @@ class MainWindow(QMainWindow):
                 try:
                     x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
                 except Exception as e:
-                    print(f"X calculation error: {params['calc_x']}: {e}")
+                    logger.error(f"X calculation error: {params['calc_x']}: {e}")
             # Calculation for y
             if 'calc_y' in params:
                 np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
@@ -405,7 +405,7 @@ class MainWindow(QMainWindow):
                 try:
                     y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
                 except Exception as e:
-                    print(f"Y calculation error: {params['calc_y']}: {e}")
+                    logger.error(f"Y calculation error: {params['calc_y']}: {e}")
             mask = np.ones(len(x), dtype=bool)
             if 'minx' in params:
                 mask &= x >= float(params['minx'])
@@ -424,7 +424,7 @@ class MainWindow(QMainWindow):
                         mask_expr = eval(expr, {"__builtins__": {}}, local_env)
                         mask &= mask_expr
                     except Exception as e:
-                        print(f"Mask expression error: {expr}: {e}")
+                        logger.error(f"Mask expression error: {expr}: {e}")
             x = x[mask]
             y = y[mask]
             label = params.get('legend', line_info['file'])
@@ -477,7 +477,7 @@ class MainWindow(QMainWindow):
                 try:
                     x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
                 except Exception as e:
-                    print(f"X calculation error: {params['calc_x']}: {e}")
+                    logger.error(f"X calculation error: {params['calc_x']}: {e}")
             # Calculation for y
             if 'calc_y' in params:
                 np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
@@ -486,7 +486,7 @@ class MainWindow(QMainWindow):
                 try:
                     y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
                 except Exception as e:
-                    print(f"Y calculation error: {params['calc_y']}: {e}")
+                    logger.error(f"Y calculation error: {params['calc_y']}: {e}")
             mask = np.ones(len(x), dtype=bool)
             if 'minx' in params:
                 mask &= x >= float(params['minx'])
@@ -505,7 +505,7 @@ class MainWindow(QMainWindow):
                         mask_expr = eval(expr, {"__builtins__": {}}, local_env)
                         mask &= mask_expr
                     except Exception as e:
-                        print(f"Mask expression error: {expr}: {e}")
+                        logger.error(f"Mask expression error: {expr}: {e}")
             x = x[mask]
             y = y[mask]
             label = params.get('legend', line_info['file'])
@@ -597,7 +597,7 @@ class MainWindow(QMainWindow):
                 try:
                     df, _, _, _ = read_data_file(file)
                 except Exception as e:
-                    print(f"Could not read file {file}: {e}")
+                    logger.error(f"Could not read file {file}: {e}")
                     continue
                 self.add_plot_line(file, df, params, comments)
             # Restore global params
@@ -688,6 +688,7 @@ class MainWindow(QMainWindow):
 
     def _run_processing_dialog(self, file_path, mode):
         # Load columns for dropdowns using data_reader
+        self.set_status_message(f"Waiting on processing dialog for {file_path} in {mode} mode...")
         columns = []
         df = None
         try:
@@ -698,7 +699,12 @@ class MainWindow(QMainWindow):
         try:
             dialog = ProcessingDialog(file_path, module_type=mode, data_columns=columns, parent=self)
             if dialog.exec_() == QDialog.Accepted:
-                module_cls, params = dialog.get_selected_module()
+                module_name, module_cls, params = dialog.get_selected_module()
+                if module_name is None:
+                    logger.warning(f"No module selected for {file_path} in {mode} mode")
+                    raise Exception("No module selected")
+                logger.info(f"Processing {file_path} with {module_name} in {mode} mode...")
+                self.set_status_message(f"Processing {file_path} with {module_name} in {mode} mode...")
                 # Determine output dir based on mode
                 if mode == 'pre':
                     output_dir = PREPROCESSED_DATA_DIR
@@ -714,7 +720,9 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "Processing Error", str(e))
         except Exception as e:
             QMessageBox.critical(self, "Dialog Error", str(e))
-            raise e
+            #raise e
+
+        self.clear_status_message()
 
 def main():
     app = QApplication(sys.argv)
