@@ -24,6 +24,35 @@ class LineListWidget(QWidget):
         self.setMinimumSize(0, 0)
         self.vbox.setStretch(0, 0)
 
+    def _bind_signals(self):
+        """
+        Rebind all signals for all items to ensure correct indices after add/remove.
+        Didn't feel like keeping track of the individual buttons so we iterate over them instead until we find them.
+        """
+        for idx, (widget, item) in enumerate(self.line_items):
+            hbox = widget.layout()
+            checkbox = None
+            remove_btn = None
+            for i in range(hbox.count()):
+                w = hbox.itemAt(i).widget()
+                if isinstance(w, QCheckBox):
+                    checkbox = w
+                if isinstance(w, QPushButton) and w.text() == "Remove":
+                    remove_btn = w
+            # Defensive: only bind if found
+            if checkbox is not None:
+                try:
+                    checkbox.toggled.disconnect()
+                except Exception:
+                    pass
+                checkbox.toggled.connect(lambda checked, i=idx: self.showHideToggled.emit(i, checked))
+            if remove_btn is not None:
+                try:
+                    remove_btn.clicked.disconnect()
+                except Exception:
+                    pass
+                remove_btn.clicked.connect(lambda _, i=idx: self.removeRequested.emit(i))
+
     def add_line(self, label, visible=True):
         logger.debug(f'Adding line: {label}, visible={visible}')
         widget = QWidget()
@@ -45,9 +74,7 @@ class LineListWidget(QWidget):
         item.setSizeHint(widget.sizeHint())
         idx = self.list_widget.count() - 1
         self.line_items.append((widget, item))
-        # Connect signals
-        checkbox.toggled.connect(lambda checked, i=idx: self.showHideToggled.emit(i, checked))
-        remove_btn.clicked.connect(lambda _, i=idx: self.removeRequested.emit(i))
+        self._bind_signals()
         logger.info(f'Line added: {label}')
 
     def _on_item_double_clicked(self, item):
@@ -61,11 +88,10 @@ class LineListWidget(QWidget):
             _, item = self.line_items.pop(idx)
             self.list_widget.takeItem(idx)
             logger.info(f'Line removed idx={idx}')
-            # Re-index remaining items
-            for i, (widget, item) in enumerate(self.line_items):
-                pass
+            self._bind_signals()
         else:
             logger.error(f'Tried to remove invalid line idx={idx}')
+    
 
     def set_line_visible(self, idx, visible):
         logger.debug(f'Setting line idx={idx} visible={visible}')

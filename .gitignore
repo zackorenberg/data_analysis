@@ -1,3 +1,8 @@
+# Data and configuration specific files
+*.dat
+*.json
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
