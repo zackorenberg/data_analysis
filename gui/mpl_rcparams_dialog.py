@@ -14,17 +14,15 @@ import numpy as np
 
 
 # There is a bug in matplotlib where the rcParams['backend'] is an object instead of a string when first loading the module.
-# This is a workaround to set it to something that will throw an error, forcing it to reset to the default
-# It is worth nothing that calling plt.rcdefaults() does not actually do anything but possible introduce a race condition on application launch
-# Furthermore, performing an operation on rcParams causes this bug to fix even rcParamsDefault. If you don't believe me, comment this out and
-# running this file with mpl version 3.5.3
-
-if type(mpl.rcParams['backend']) == object:
-    # Lets reset it by setting it to something fake
-    try:
-        mpl.rcParams['asdasdasd.dsadsadsa'] = 'asdasdasd'
-    except:
-        pass
+# After further investigation, it would appear the bug is due to partial initialization of the rcParams dictionary.
+# This is a workaround that calls a function on rcParams that will force it to be initialized fully.
+# It is worth nothing that calling plt.rcdefaults() does not actually fully initialize but rather possibly introduce a race condition on 
+# application launch. Furthermore, performing an operation on rcParams causes this bug to fix even rcParamsDefault. If you don't believe me, 
+# comment this out and run this file with mpl version 3.5.3
+try:
+    _ = mpl.rcParams['backend'] # Should be future proof, still wrapping it in a try/except just in case
+except:
+    pass
 # Save the default rcparams for use later
 default_rcparams = mpl.rcParamsDefault.copy()
 
