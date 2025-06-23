@@ -2,6 +2,9 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 # Set some default rcParams
 """
@@ -20,7 +23,7 @@ matplotlib.rcParams.update({
     'legend.edgecolor': '#f0f0f0',
 })
 """
-
+"""
 plt.rcParams.update({
     'xtick.direction':'in',
     'axes.linewidth': 1,
@@ -46,6 +49,7 @@ plt.rcParams.update({
     'legend.fontsize': 12,
     'font.family': 'sans-serif',
 })
+"""
 
 class MplCanvas(FigureCanvas):
     def __init__(self, parent=None, width=11, height=8.5, dpi=300):
@@ -91,7 +95,7 @@ class MplCanvas(FigureCanvas):
             else:
                 self.axes.set_xlim(auto=True)
         except Exception as e:
-            print(f"Error setting xlim: {xlim}, {e}")
+            logger.error(f"Error setting xlim: {xlim}, {e}")
         ylim = params.get('ylim', (None, None))
         try:
             bottom = ylim[0] if ylim and len(ylim) > 0 and ylim[0] not in (None, '', 'None') else None
@@ -105,9 +109,10 @@ class MplCanvas(FigureCanvas):
             else:
                 self.axes.set_ylim(auto=True)
         except Exception as e:
-            print(f"Error setting ylim: {ylim}, {e}")
+            logger.error(f"Error setting ylim: {ylim}, {e}")
         # Set grid
-        self.axes.grid(params.get('grid', False))
+
+        self.axes.grid(params.get('grid', False)) # Added reset=True to disable grid_module parameter overrides
         # Set x/y ticks
         xticks = params.get('xticks', '')
         if xticks:
@@ -156,3 +161,27 @@ class MplCanvas(FigureCanvas):
             except Exception:
                 pass  # Ignore invalid marker
 
+
+    def update_visuals(self, global_params, active_modules = []):
+        """
+        Applies all visual elements to the plot (global parameters, active modules, etc)
+
+        This should be run after whatever plotting logic anywhere else in the code.
+
+        :param global_params:
+        :param active_modules:
+        :return:
+        """
+        logger.debug(f"Updating visuals with {len(active_modules)} modules")
+
+        self.apply_plot_params(global_params)
+
+        for module in active_modules:
+            try:
+                logger.debug(f"Applying plot module: {module.name}")
+                module.plot(self.axes)
+            except Exception as e:
+                logger.error(f"Error applying plot module {module.name}: {e}")
+
+        self.figure.tight_layout()
+        self.draw()

@@ -15,8 +15,9 @@ import json
 from gui.line_list_widget import LineListWidget
 from logger import get_logger
 import logging
-from localvars import RAW_DATA_DIR, PREPROCESSED_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR, DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE, PROCESSING_MODULES_DIR
+from localvars import RAW_DATA_DIR, PREPROCESSED_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR, DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE, REREAD_DATAFILE_ON_EDIT, PROCESSING_MODULES_DIR
 from gui.processing_dialog import ProcessingDialog
+from gui.plot_module_widget import PlotModuleWidget
 
 logger = get_logger(__name__)
 
@@ -175,8 +176,18 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(self.plot_dock, self.param_widget)
         self.plot_dock.raise_()
 
+        # Plot modules widget
+        self.plot_module_widget = PlotModuleWidget(parent=self)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.plot_module_widget)
+        self.plot_module_widget.modulesChanged.connect(self.on_plot_modules_changed)
+
+        # Tabify with parameter widget
+        self.tabifyDockWidget(self.param_widget, self.plot_module_widget)
+        self.plot_dock.raise_()
+
         # Store plot info
         self.plotted_lines = []  # List of dicts: {file, params, line}
+        self.plot_modules = []  # List of active plot module instances
 
         # Connect file tree double-clicks
         self.raw_tree.doubleClicked.connect(lambda idx: self.handle_file_double_click(idx, 'raw'))
@@ -292,10 +303,12 @@ class MainWindow(QMainWindow):
         
         line, = self.canvas.axes.plot(x, y, label=label, **plot_kwargs)
         self.canvas.set_line_style_and_color(line, params)
-        self.canvas.apply_plot_params(self.global_params) # Reapply global params
-        self.canvas.figure.tight_layout()
-        self.canvas.draw()
-        line_info = {'file': file_path, 'params': params, 'line': line, 'comments': comments}
+
+        self.canvas.update_visuals(self.global_params, self.plot_modules)
+        #self.canvas.apply_plot_params(self.global_params) # Reapply global params
+        #self.canvas.figure.tight_layout()
+        #self.canvas.draw()
+        line_info = {'file': file_path, 'df': df, 'params': params, 'line': line, 'comments': comments}
         self.plotted_lines.append(line_info)
         self.line_list_widget.add_line(label, visible=True)
         logger.info(f"Plot line added: {label}")
@@ -308,12 +321,16 @@ class MainWindow(QMainWindow):
             file_path = line_info['file']
             params = line_info['params']
             comments = line_info.get('comments', [])
-            try:
-                df, _, _, _ = read_data_file(file_path)
-            except Exception as e:
-                logger.error(f"Could not read file {file_path}: {e}")
-                QMessageBox.warning(self, "Error", f"Could not read file:\n{file_path}\n{e}")
-                return
+            if REREAD_DATAFILE_ON_EDIT:
+                try:
+                    df, _, _, _ = read_data_file(file_path)
+                except Exception as e:
+                    logger.error(f"Could not read file {file_path}: {e}")
+                    QMessageBox.warning(self, "Error", f"Could not read file:\n{file_path}\n{e}")
+                    return
+            else:
+                df = line_info['df']
+
             columns = list(df.columns)
             dialog = PlotParamDialog(columns, current_params=params, parent=self, comments=comments)
             dialog.paramsSelected.connect(lambda new_params, fp=file_path, d=df, idx=idx: self.update_plot_line(fp, d, new_params, idx))
@@ -337,15 +354,18 @@ class MainWindow(QMainWindow):
             line.set_label(f"{params['y']} vs {params['x']}")
         self.plotted_lines[idx]['params'] = params
         self.plotted_lines[idx]['line'] = line
+        self.plotted_lines[idx]['df'] = df # Only if rereading is enabled, otherwise makes no difference
         # Update label in custom widget
         
         self.canvas.set_line_style_and_color(line, params)
         # TODO: make this better?
         self.line_list_widget.list_widget.itemWidget(self.line_list_widget.list_widget.item(idx)).layout().itemAt(1).widget().setText(line.get_label())
         self.canvas.axes.relim()
-        self.canvas.apply_plot_params(self.global_params)
-        self.canvas.figure.tight_layout()
-        self.canvas.draw()
+
+        self.canvas.update_visuals(self.global_params, self.plot_modules)
+        #self.canvas.apply_plot_params(self.global_params)
+        #self.canvas.figure.tight_layout()
+        #self.canvas.draw()
         logger.info(f"Plot line updated at idx={idx}")
         self.clear_status_message()
         
@@ -357,9 +377,10 @@ class MainWindow(QMainWindow):
     def apply_global_plot_params(self, params):
         self.set_status_message("Applying global plot parameters...")
         self.global_params = params
-        self.canvas.apply_plot_params(params)
-        self.canvas.figure.tight_layout()
-        self.canvas.draw()
+        self.canvas.update_visuals(self.global_params, self.plot_modules)
+        #self.canvas.apply_plot_params(params)
+        #self.canvas.figure.tight_layout()
+        #self.canvas.draw()
         self.plot_dock.raise_() # Show plot now
         self.clear_status_message()
 
@@ -371,11 +392,14 @@ class MainWindow(QMainWindow):
         logger.debug("Redrawing plot with current plotted_lines.")
         self.canvas.axes.clear()
         for line_info in self.plotted_lines:
+            df = line_info['df']
+            """
             try:
                 df, _, _, _ = read_data_file(line_info['file'])
             except Exception as e:
                 logger.error(f"Error reading file {line_info['file']}: {e}")
                 continue
+            """
             params = line_info['params']
             try:
                 x, y = prepare_plot_data(df, params, logger)
@@ -393,9 +417,12 @@ class MainWindow(QMainWindow):
         logger.debug("Resetting plot and parameters...")
         self.set_status_message("Resetting plot and parameters...")
         self.redraw_plot()
-        self.canvas.apply_plot_params({'legend': True})
-        self.canvas.figure.tight_layout()
-        self.canvas.draw()
+        # TODO: reset all plot modules
+        # self.plot_modules.reset.emit() or something along those lines
+        self.canvas.update_visuals({'legend': True}, self.plot_modules)
+        #self.canvas.apply_plot_params({'legend': True})
+        #self.canvas.figure.tight_layout()
+        #self.canvas.draw()
         self.param_widget.title_edit.clear()
         self.param_widget.xlabel_edit.clear()
         self.param_widget.ylabel_edit.clear()
@@ -421,7 +448,8 @@ class MainWindow(QMainWindow):
             return
         fig, ax = plt.subplots(figsize=(w, h))
         for line_info in self.plotted_lines:
-            df, _, _, _ = read_data_file(line_info['file'])
+            df = line_info['df']
+            #df, _, _, _ = read_data_file(line_info['file'])
             params = line_info['params']
             try:
                 x, y = prepare_plot_data(df, params, logger)
@@ -481,7 +509,7 @@ class MainWindow(QMainWindow):
         # Prepare config dict
         config = {
             'plotted_lines': [
-                {
+                { # This is all we need, everything else gets created in add_plot_line()
                     'file': line['file'],
                     'params': line['params'],
                     'comments': line.get('comments', [])
@@ -506,7 +534,11 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Could not read file {file}: {e}")
             return
-        self.add_plot_line(file, df, params, comments)
+
+        try:
+            self.add_plot_line(file, df, params, comments)
+        except Exception as e:
+            logger.error(f"Could not add plot line for file {file}: {e}")
 
     def import_plot_config(self):
         self.set_status_message("Importing plot configuration...")
@@ -528,9 +560,10 @@ class MainWindow(QMainWindow):
             # Restore global params
             global_params = config.get('global_params', {})
             self.global_params = global_params
-            self.canvas.apply_plot_params(global_params)
-            self.canvas.figure.tight_layout()
-            self.canvas.draw()
+            self.canvas.update_visuals(self.global_params, self.plot_modules)
+            #self.canvas.apply_plot_params(global_params)
+            #self.canvas.figure.tight_layout()
+            #self.canvas.draw()
             self.update_param_widget_fields_from_plot()
             self.set_status_message(f"Imported plot configuration from {file_path}", 5000)
         except Exception as e:
@@ -552,9 +585,11 @@ class MainWindow(QMainWindow):
             # Restore global params
             global_params = config.get('global_params', {})
             self.global_params = global_params
-            self.canvas.apply_plot_params(global_params)
-            self.canvas.figure.tight_layout()
-            self.canvas.draw()
+
+            self.canvas.update_visuals(self.global_params, self.plot_modules)
+            #self.canvas.apply_plot_params(global_params)
+            #self.canvas.figure.tight_layout()
+            #self.canvas.draw()
             self.update_param_widget_fields_from_plot()
             self.set_status_message(f"Appended plot configuration from {file_path}", 5000)
         except Exception as e:
@@ -590,9 +625,11 @@ class MainWindow(QMainWindow):
             self.plotted_lines.pop(idx)
             self.line_list_widget.remove_line(idx)
             self.redraw_plot()
-            self.canvas.apply_plot_params(self.global_params)
-            self.canvas.figure.tight_layout()
-            self.canvas.draw()
+
+            self.canvas.update_visuals(self.global_params, self.plot_modules)
+            #self.canvas.apply_plot_params(self.global_params)
+            #self.canvas.figure.tight_layout()
+            #self.canvas.draw()
             logger.info(f"Plot line removed idx={idx}")
         else:
             logger.error(f"Error removing line: {idx} is out of range")
@@ -640,7 +677,7 @@ class MainWindow(QMainWindow):
         self.set_status_message(f"Waiting on processing dialog for {file_path} in {mode} mode...")
         columns = []
         df = None
-        try:
+        try: # Reread if plotted because, we shouldn't assume its already loaded
             df, _, _, _ = read_data_file(file_path)
             columns = list(df.columns)
         except Exception as e:
@@ -672,6 +709,33 @@ class MainWindow(QMainWindow):
             #raise e
 
         self.clear_status_message()
+
+    def reload_plot_modules(self):
+        """
+        This is to force a reload on all plot modules if, say, the rcParams are changed externally
+
+        for use with updated rcparams from global table
+        """
+        logger.debug("Reloading plot modules...")
+        self.plot_module_widget._reload_modules() # Silent reload
+        modules = self.plot_module_widget.export_modules()
+        for module in self.plot_modules:
+            module.disable(self.canvas.axes)
+        self.plot_modules = modules
+        logger.debug("Plot modules reloaded.")
+
+    def on_plot_modules_changed(self, modules):
+        """Handle plot module changes"""
+        # Disable previous modules
+        for module in self.plot_modules:
+            module.disable(self.canvas.axes)
+        # Enable new modules
+        self.plot_modules = modules
+        logger.info(f"Plot modules changed: {[m.name for m in modules]}")
+        # Redraw the plot to apply the new modules
+        self.redraw_plot()
+        self.canvas.update_visuals(self.global_params, self.plot_modules)
+        self.plot_dock.raise_()
 
 def main():
     app = QApplication(sys.argv)
