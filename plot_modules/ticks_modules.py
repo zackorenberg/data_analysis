@@ -1,15 +1,9 @@
-# C:/Users/zberks/OneDrive - McGill University/G2/CorbinoAnalysis/plot_modules/ticks_modules.py
-from PyQt6.QtWidgets import QMessageBox
-
 from gui.plot_module_widget import PlotModule
 import matplotlib.pyplot as plt
 from logger import get_logger
 
 logger = get_logger(__name__)
 
-# --- 1. Centralized, Generic Parameter Definitions ---
-# This dictionary defines the core properties of each parameter, without specifying axis or type.
-# Format: generic_name: (UI Label Base, Type, Required)
 SHARED_TICK_PARAM_DEFS = {
     'tick_values': ('Tick Values (csv)', str, False),
     'tick_labels': ('Tick Labels (csv)', str, False),
@@ -85,7 +79,7 @@ def build_params_list(axis, which, *generic_keys):
     return result
 
 
-# --- 2. The Skeleton Base Class ---
+# The Skeleton Base Classes
 class __BaseSingleAxisTickModule(PlotModule):
     """
     A base class that handles the logic for a single axis and tick type.
@@ -216,6 +210,8 @@ tick_keys = {
         ]
     },
 }
+
+# Actual tick modules
 
 class MajorXTickModule(__BaseSingleAxisTickModule):
     name = "X Major Ticks"

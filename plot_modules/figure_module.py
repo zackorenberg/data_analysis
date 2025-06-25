@@ -1,5 +1,3 @@
-# C:/Users/zberks/OneDrive - McGill University/G2/CorbinoAnalysis/plot_modules/figure_module.py
-
 from gui.plot_module_widget import PlotModule
 import matplotlib.pyplot as plt
 from logger import get_logger

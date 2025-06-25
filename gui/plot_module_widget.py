@@ -5,7 +5,7 @@ import json
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QPushButton, QLabel,
     QScrollArea, QMessageBox, QDockWidget, QDialog, QFormLayout, QDialogButtonBox,
-    QLineEdit, QComboBox, QColorDialog, QFileDialog
+    QLineEdit, QComboBox, QColorDialog, QFileDialog, QTextEdit
 )
 from PyQt5.QtCore import pyqtSignal, QSize, Qt
 from PyQt5.QtGui import QColor, QPainter, QPen
@@ -32,6 +32,13 @@ class PlotModule:
 
     def __init__(self, params = None):
         self.params = params or {}
+
+    def initialize(self):
+        """
+        Possible functions to be called before mpl canvas is created, this is typically to affect global settings (i.e. styles)
+        If a script requires a full plot reset, it must return True in the initialization code
+        """
+        return False
 
     def plot(self, ax):
         """Main plotting function - override in subclasses"""
@@ -227,6 +234,8 @@ class PlotModuleWidget(QDockWidget):
         if dialog.exec_() == QDialog.Accepted:
             # If user clicks OK, save the new configuration
             self.module_configs[module_name] = dialog.get_params()
+            self._check_modules([module_name]) # Add check
+
 
     def select_all_modules(self):
         for i in range(self.modules_layout.count()):
@@ -246,7 +255,7 @@ class PlotModuleWidget(QDockWidget):
 
     def _reload_modules(self):
         """
-        Just reloads the actual modules and updates the layout
+        Just reloads the actual modules and updates the layout, does not apply them
         """
         checked_modules = self._checked_modules()
         self._clear_layout(self.modules_layout)
@@ -254,7 +263,7 @@ class PlotModuleWidget(QDockWidget):
         self._check_modules(checked_modules)
 
     def reload_modules(self):
-        """Reloads all modules on demand (say a user changed one, for example)"""
+        """Reloads and applies all modules on demand (say a user changed one, for example)"""
         self._reload_modules()
         self.apply_modules()
 
@@ -303,7 +312,7 @@ class PlotModuleWidget(QDockWidget):
             'configurations': self.module_configs
         }
 
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export Module Configuration", "", "JSON Files (*.json)")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Module Configuration", "plot_modules.json", "JSON Files (*.json)")
         if not file_path:
             return
 
@@ -316,13 +325,14 @@ class PlotModuleWidget(QDockWidget):
             logger.error(f"Failed to export module config: {e}")
 
 
-    def import_module_config(self):
+    def import_module_config(self, file_path = None):
         """Loads module selections and configurations from a JSON file."""
         logger.debug("Importing module configuration.")
 
-        file_path, _ = QFileDialog.getOpenFileName(self, "Import Module Configuration", "", "JSON Files (*.json)")
-        if not file_path:
-            return
+        if not file_path: # If not supplied, we simply ask
+            file_path, _ = QFileDialog.getOpenFileName(self, "Import Module Configuration", "plot_modules.json", "JSON Files (*.json)")
+            if not file_path:
+                return
 
         try:
             with open(file_path, 'r') as f:
@@ -504,6 +514,13 @@ class ModuleConfigDialog(QDialog):
                 default_value = self._process_mpl_color_default(default_value)
                 if default_value: # this case we'd want it to be clear and handled by mpl
                     widget.set_color(QColor(default_value))
+        elif typ == 'textarea':  # <-- ADD THIS BLOCK
+            widget = QTextEdit()
+            widget.setAcceptRichText(False)  # Ensure plain text for code
+            widget.setMinimumHeight(150)  # Give it a reasonable default size
+            if default_value is not None:
+                # QTextEdit doesn't have a placeholder, so we set initial text
+                widget.setPlainText(str(default_value))
         else:  # Handles str, int, float, etc.
             widget = QLineEdit()
             if default_value is not None:
@@ -521,6 +538,8 @@ class ModuleConfigDialog(QDialog):
                 widget.setCurrentIndex(index)
         elif isinstance(widget, QCheckBox):
             widget.setChecked(validate_bool(value))
+        elif isinstance(widget, QTextEdit):
+            widget.setPlainText(str(value))
         elif isinstance(widget, ColorButton):
             try:
                 value = self._process_mpl_color_default(value)
@@ -560,7 +579,8 @@ class ModuleConfigDialog(QDialog):
                         value = param_def[4] if param_def else None
                 elif not value:
                     value = param_def[4] if param_def else None
-
+            elif isinstance(widget, QTextEdit):
+                value = widget.toPlainText()
             if (param_def and param_def[3]) and not value:
                 QMessageBox.warning(self, f"Missing Parameter: {name}", f"You must specify a value for this parameter: '{param_def[1]}'.")
                 return {} # We wont specify any parameters

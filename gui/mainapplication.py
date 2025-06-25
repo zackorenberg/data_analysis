@@ -140,15 +140,20 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.LeftDockWidgetArea, self.data_browser_dock)
 
         # Matplotlib plot area dock
-        self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
-        self.toolbar = NavigationToolbar(self.canvas, self)
+        #self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
+        #self.toolbar = NavigationToolbar(self.canvas, self)
         self.plot_widget = QWidget()
+        self.canvas = None # Will be created in next call
+        self.toolbar = None # Will be created in next call
+        self._add_mpl_canvas()
+        """
         plot_layout = QVBoxLayout()
         plot_layout.setContentsMargins(0, 0, 0, 0)
         plot_layout.setSpacing(0)
         plot_layout.addWidget(self.toolbar)
         plot_layout.addWidget(self.canvas)
         self.plot_widget.setLayout(plot_layout)
+        """
         self.plot_dock = QDockWidget("Plot Area", self)
         self.plot_dock.setWidget(self.plot_widget)
         self.plot_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
@@ -197,6 +202,46 @@ class MainWindow(QMainWindow):
         self.global_params = {}
 
         self._setup_file_tree_context_menu()
+
+    def _add_mpl_canvas(self):
+        """
+        Adds/Resets the MplCanvas widget fully by deleting the old canvas and toolbar
+        and creating new ones in their place. This ensures a clean slate for the plot.
+        """
+        logger.debug("Creating new MplCanvas and toolbar.")
+
+        # Get the existing layout or create a new one if it doesn't exist.
+        plot_layout = self.plot_widget.layout()
+        if plot_layout:
+            # Clear existing widgets from the layout
+            while plot_layout.count():
+                item = plot_layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()  # Schedule old widgets for deletion
+        else:
+            # If no layout exists (first call), create one and set it
+            plot_layout = QVBoxLayout()
+            plot_layout.setContentsMargins(0, 0, 0, 0)
+            plot_layout.setSpacing(0)
+            self.plot_widget.setLayout(plot_layout)
+
+        # Now, current_plot_layout is guaranteed to exist and be empty.
+        # The old self.canvas and self.toolbar references are already cleared by deleteLater()
+        # from the previous iteration, if any.
+
+        # Create new MplCanvas and NavigationToolbar instances
+        # Use the same dimensions as the initial setup
+        self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
+        self.toolbar = NavigationToolbar(self.canvas, self)
+
+        # Add the new toolbar and canvas to the current layout
+        plot_layout.addWidget(self.toolbar)
+        plot_layout.addWidget(self.canvas)
+
+        logger.info("Added MplCanvas and toolbar.")
+
+    # ... (rest of the MainWindow class)
 
     def _create_menubar(self):
         menubar = self.menuBar()
@@ -264,7 +309,7 @@ class MainWindow(QMainWindow):
         elif tree_type == 'post':
             model = self.post_model
         else:
-            logging.error(f"Invalid tree type: {tree_type}")
+            logger.error(f"Invalid tree type: {tree_type}")
             return
         file_path = model.filePath(index)
         if os.path.isdir(file_path):
@@ -658,7 +703,7 @@ class MainWindow(QMainWindow):
         elif tree_type == 'pre':
             model = self.pre_model
         else:
-            logging.error(f"Invalid tree type: {tree_type}")
+            logger.error(f"Invalid tree type: {tree_type}")
             return
         file_path = model.filePath(index)
         if os.path.isdir(file_path):
@@ -729,6 +774,13 @@ class MainWindow(QMainWindow):
         # Disable previous modules
         for module in self.plot_modules:
             module.disable(self.canvas.axes)
+        # Incase a module modifies global parameters heavily
+        reset_plot = False
+        for module in modules: # Note, initialize() will return True only when a reset is desired
+            reset_plot |= module.initialize() # Run possible initialize function
+        if reset_plot:
+            logger.info("Plot module(s) require plot reset.")
+            self._add_mpl_canvas()
         # Enable new modules
         self.plot_modules = modules
         logger.info(f"Plot modules changed: {[m.name for m in modules]}")
@@ -741,4 +793,4 @@ def main():
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    sys.exit(app.exec_()) 
+    sys.exit(app.exec_())
