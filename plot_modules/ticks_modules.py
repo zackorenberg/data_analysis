@@ -152,7 +152,9 @@ class __BaseSingleAxisTickModule(PlotModule):
         #                  for p in self.PARAMETERS if 'tick_values' not in p[0] and 'tick_labels' not in p[0]}
         ax.tick_params(axis=self.axis, which=self.which, reset=True)
         # Reset top and left bug that occurs when dealing with majors
-        ax.tick_params(axis='both', which='both', top=False, right=False)
+        # ax.tick_params(axis='both', which='both', top=False, right=False)
+
+        return True # To reset plot
 
     def _parse_csv_to_float(self, csv_string):
         if not csv_string: return None
@@ -189,6 +191,7 @@ class __BaseMultiAxisTickModule(PlotModule):
         for axis in self.axis:
             for which in self.which:
                 self.modules[axis][which].disable(ax)
+        return True
 
 tick_keys = {
     'x':{
@@ -236,7 +239,7 @@ class MinorXTickModule(__BaseSingleAxisTickModule):
 
     def disable(self, ax):
         ax.minorticks_off()
-        super().disable(ax)
+        return super().disable(ax)
 
 
 class MajorYTickModule(__BaseSingleAxisTickModule):
@@ -262,7 +265,7 @@ class MinorYTickModule(__BaseSingleAxisTickModule):
 
     def disable(self, ax):
         ax.minorticks_off()
-        super().disable(ax)
+        return super().disable(ax)
 
 
 class MajorMinorXTickModule(__BaseMultiAxisTickModule):
@@ -280,7 +283,7 @@ class MajorMinorXTickModule(__BaseMultiAxisTickModule):
 
     def disable(self, ax):
         ax.minorticks_off()
-        super().disable(ax)
+        return super().disable(ax)
 
 
 class MajorMinorYTickModule(__BaseMultiAxisTickModule):
@@ -298,7 +301,7 @@ class MajorMinorYTickModule(__BaseMultiAxisTickModule):
 
     def disable(self, ax):
         ax.minorticks_off()
-        super().disable(ax)
+        return super().disable(ax)
 
 
 """

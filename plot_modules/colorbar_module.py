@@ -1,5 +1,5 @@
 from gui.plot_module_widget import PlotModule
-
+import matplotlib.pyplot as plt
 
 class ColorbarModule(PlotModule):
     """Adds a colorbar to plots"""

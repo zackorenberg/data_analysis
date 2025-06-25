@@ -544,13 +544,13 @@ class MainWindow(QMainWindow):
         plt.show()
         self.clear_status_message()
 
-    def export_plot_config(self):
+    def export_plot_config(self, file_path = None):
         self.set_status_message("Exporting plot configuration...")
-        from PyQt5.QtWidgets import QFileDialog
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
-        if not file_path:
-            self.set_status_message("")
-            return
+        if not file_path: # If not supplied, we simply ask
+            file_path, _ = QFileDialog.getSaveFileName(self, "Export Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
+            if not file_path:
+                self.set_status_message("")
+                return
         # Prepare config dict
         config = {
             'plotted_lines': [
@@ -585,13 +585,13 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Could not add plot line for file {file}: {e}")
 
-    def import_plot_config(self):
+    def import_plot_config(self, file_path = None):
         self.set_status_message("Importing plot configuration...")
-        from PyQt5.QtWidgets import QFileDialog
-        file_path, _ = QFileDialog.getOpenFileName(self, "Import Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
-        if not file_path:
-            self.set_status_message("")
-            return
+        if not file_path: # If not supplied, we simply ask
+            file_path, _ = QFileDialog.getOpenFileName(self, "Import Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
+            if not file_path:
+                self.set_status_message("")
+                return
         try:
             with open(file_path, 'r') as f:
                 config = json.load(f)
@@ -614,13 +614,13 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.set_status_message(f"Import failed: {e}", 5000)
 
-    def append_plot_config(self):
+    def append_plot_config(self, file_path = None):
         self.set_status_message("Appending plot configuration...")
-        from PyQt5.QtWidgets import QFileDialog
-        file_path, _ = QFileDialog.getOpenFileName(self, "Append Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
-        if not file_path:
-            self.set_status_message("")
-            return
+        if not file_path: # If not supplied, we simply ask
+            file_path, _ = QFileDialog.getOpenFileName(self, "Append Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
+            if not file_path:
+                self.set_status_message("")
+                return
         try:
             with open(file_path, 'r') as f:
                 config = json.load(f)
@@ -771,19 +771,22 @@ class MainWindow(QMainWindow):
 
     def on_plot_modules_changed(self, modules):
         """Handle plot module changes"""
+        reset_plot = False
+
         # Disable previous modules
         for module in self.plot_modules:
-            module.disable(self.canvas.axes)
-        # Incase a module modifies global parameters heavily
-        reset_plot = False
-        for module in modules: # Note, initialize() will return True only when a reset is desired
-            reset_plot |= module.initialize() # Run possible initialize function
+            reset_plot |= (module.disable(self.canvas.axes) or module.reset_plot) # In the event of a None, default to false
+
+        # Add new modules
+        self.plot_modules = modules
+        logger.info(f"Plot modules changed: {[m.name for m in modules]}")
+        # Run initialize functions, should any need to be initialized before plotting (i.e. when plot reset is required
+        for module in modules:  # Note, initialize() will return True only when a reset is desired
+            reset_plot |= (module.initialize() or module.reset_plot)  # Run possible initialize function
+        # Incase a module modifies global parameters heavily and needs a reset
         if reset_plot:
             logger.info("Plot module(s) require plot reset.")
             self._add_mpl_canvas()
-        # Enable new modules
-        self.plot_modules = modules
-        logger.info(f"Plot modules changed: {[m.name for m in modules]}")
         # Redraw the plot to apply the new modules
         self.redraw_plot()
         self.canvas.update_visuals(self.global_params, self.plot_modules)

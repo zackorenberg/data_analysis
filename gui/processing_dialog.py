@@ -505,10 +505,11 @@ class ProcessingDialog(QDialog):
                     if not group_values:
                         raise ValueError(f"At least one group required for '{label}'.")
 
-    def import_params(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Import Parameters", "", "JSON Files (*.json)")
-        if not file_path:
-            return
+    def import_params(self, file_path = None):
+        if not file_path: # If not supplied, we simply ask
+            file_path, _ = QFileDialog.getOpenFileName(self, "Import Parameters", "", "JSON Files (*.json)")
+            if not file_path:
+                return
         try:
             with open(file_path, 'r') as f:
                 params = json.load(f)
@@ -588,7 +589,7 @@ class ProcessingDialog(QDialog):
             QMessageBox.warning(self, "Import Error", str(e))
             logger.warning(f"Import Error: {e}")
 
-    def export_params(self):
+    def export_params(self, file_path = None):
         try:
             params = self.get_params(includeBaseParams=False) # excluse base parameters
             # Add module name
@@ -598,9 +599,10 @@ class ProcessingDialog(QDialog):
             QMessageBox.warning(self, "Export Error", str(e))
             logger.warning(f"Export Error: {e}")
             return
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export Parameters", "params.json", "JSON Files (*.json)")
-        if not file_path:
-            return
+        if not file_path: # If not supplied, we simply ask
+            file_path, _ = QFileDialog.getSaveFileName(self, "Export Parameters", "params.json", "JSON Files (*.json)")
+            if not file_path:
+                return
         try:
             with open(file_path, 'w') as f:
                 json.dump(params, f, indent=2)

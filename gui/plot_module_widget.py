@@ -30,22 +30,27 @@ class PlotModule:
     name = "Base Plot Module"
     description = "Base Plot Module - You should never see this text"
 
+    reset_plot = False # This flag should be set to true should any modifications require a reset (init and disable)
+
     def __init__(self, params = None):
         self.params = params or {}
 
     def initialize(self):
         """
         Possible functions to be called before mpl canvas is created, this is typically to affect global settings (i.e. styles)
-        If a script requires a full plot reset, it must return True in the initialization code
+        If the initialization function requires a full plot reset, it must return True
         """
-        return False
+        pass
 
     def plot(self, ax):
         """Main plotting function - override in subclasses"""
         pass
 
     def disable(self, ax):
-        """ For the event that a plot is disabled """
+        """
+        For the event that a plot is disabled.
+        If the disable function requires a full plot reset, it must return True
+        """
         pass
 
 def discover_plot_modules(modules_dir="plot_modules"):
@@ -102,7 +107,7 @@ class PlotModuleWidget(QDockWidget):
         self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
 
         self.discovered_modules = []
-        # NEW: Dictionary to store user-defined configurations for each module
+        # Dictionary to store user-defined configurations for each module
         self.module_configs = {}
 
         self.main_widget = QWidget()
@@ -177,7 +182,7 @@ class PlotModuleWidget(QDockWidget):
                 row_layout.addWidget(checkbox)
                 row_layout.addStretch()
 
-                # NEW: If the module has parameters, add a "Configure" button
+                # If the module has parameters, add a "Configure" button
                 if parameters:
                     config_btn = QPushButton("Configure...")
                     config_btn.setProperty("module_name", module_name)
@@ -303,7 +308,7 @@ class PlotModuleWidget(QDockWidget):
         return enabled_instances
 
 
-    def export_module_config(self):
+    def export_module_config(self, file_path = None):
         """Saves the current module selections and configurations to a JSON file."""
         logger.debug("Exporting module configuration.")
 
@@ -311,10 +316,10 @@ class PlotModuleWidget(QDockWidget):
             'active_modules': self._checked_modules(),
             'configurations': self.module_configs
         }
-
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export Module Configuration", "plot_modules.json", "JSON Files (*.json)")
-        if not file_path:
-            return
+        if not file_path: # If not supplied, we simply ask
+            file_path, _ = QFileDialog.getSaveFileName(self, "Export Module Configuration", "plot_modules.json", "JSON Files (*.json)")
+            if not file_path: # If still not given, we return
+                return
 
         try:
             with open(file_path, 'w') as f:

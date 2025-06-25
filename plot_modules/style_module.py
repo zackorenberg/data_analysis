@@ -25,6 +25,8 @@ class StyleModule(PlotModule):
     description = "Applies a Matplotlib plot style (e.g., 'ggplot', 'seaborn'). Affects all plots."
     PARAMETERS = PARAMETERS
 
+    reset_plot = True # Forces plot reset whenever modified!
+
     def __init__(self, params=None):
         super().__init__(params)
         # Store the selected style name. Fallback to 'default' if not provided.
@@ -56,4 +58,6 @@ class StyleModule(PlotModule):
             logger.info("Reverted plot style to Matplotlib default.")
         except Exception as e:
             logger.error(f"Failed to revert style to default: {e}")
+
+        return True # Forces plot reset
 
