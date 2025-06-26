@@ -357,7 +357,7 @@ class ProcessingDialog(QDialog):
             if not required:
                 w.addItem("")
             w.addItems(self.data_columns)
-        elif typ == 'checkbox':
+        elif typ == 'checkbox' or typ == bool:
             w = QCheckBox()
         elif typ == 'label':
             w = QLabel(str(placeholder) if placeholder else '')
@@ -371,7 +371,7 @@ class ProcessingDialog(QDialog):
 
         if placeholder and hasattr(w, 'setPlaceholderText') and typ not in ('label', 'checkbox'):
             w.setPlaceholderText(str(placeholder))
-        if typ == 'checkbox' and placeholder:
+        if typ in [bool, 'checkbox'] and placeholder:
             w.setChecked(bool(placeholder))
         return w
 

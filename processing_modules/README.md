@@ -52,19 +52,27 @@ Optionally, a name and description can be supplied in the processing module defi
 
 ---
 
-### 4. Advanced Parameters
+## Advanced Parameters
 
 You can create more complex, dynamic forms for your parameters.
 
-## Multi-Value Parameters
+### Multi-Value Parameters
 
-To allow a user to add multiple text fields for a single parameter (e.g., a list of masks), use the `_%d` suffix in the parameter `name`.
+To allow a user to add multiple text fields for a single parameter (e.g., a list of masks), use the `_%d` suffix in the parameter `name`. For example:
+
+```py
+PARAMETERS = [
+    ...
+    ('ignore_column_%d', 'Ignore Column(s)', 'dropdown_column', True),
+    ...
+]
+```
 
 This will be collected into a list in your `params` dictionary, e.g., `params['ignore_column'] = ['col1', 'col2']`.
 
-## Multi-Group Parameters
+### Multi-Group Parameters
 
-To create a repeatable group of several related parameters, define the `type` as a dictionary. For example, a multi-valued multi-grouped parameters "Filters"
+To create a repeatable group of several related parameters, define the `type` as a dictionary. For example, a multi-valued multi-grouped parameters "Filters":
 
 ```py
 PARAMETERS = [
@@ -73,7 +81,7 @@ PARAMETERS = [
         'type': 'multi',
         'fields': [
             ('column', 'Column', 'dropdown_column', True, ''),
-            ('threshold', 'Threshold', 'float', True, ''),
+            ('threshold', 'Threshold', float, True, ''),
         ]
     }, False, None),
     ...
@@ -82,8 +90,9 @@ PARAMETERS = [
 
 This will be collected as a list of dictionaries, e.g., `params['filters'] = [{'column': 'Vx', 'threshold': 1.5}, {'column': 'Vy', 'threshold': 2.0}]`.
 
+---
 
-### Full Example
+## Full Example
 
 Here is a complete example of a simple pre-processing module, `offset_column.py`. This module adds a user-defined offsets to selected columns and saves the result as a new file. There are two implementations shown, one which leverages the `multi` typing, and one that overrides `PARAMETERS` for single-column offsetting.
 
