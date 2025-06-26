@@ -505,7 +505,7 @@ class ProcessingDialog(QDialog):
                     if not group_values:
                         raise ValueError(f"At least one group required for '{label}'.")
 
-    def import_params(self, file_path = None):
+    def import_params(self, file_path = None, silent = False):
         if not file_path: # If not supplied, we simply ask
             file_path, _ = QFileDialog.getOpenFileName(self, "Import Parameters", "", "JSON Files (*.json)")
             if not file_path:
@@ -516,13 +516,13 @@ class ProcessingDialog(QDialog):
             # Check for module key
             module_name = params.get('module', None)
             if module_name is None:
-                QMessageBox.warning(self, "Import Error", "No module specified in parameter file.")
+                if not silent: QMessageBox.warning(self, "Import Error", "No module specified in parameter file.")
                 logger.warning("No module specified in parameter file.")
                 return
             # Find module index
             module_names = [name for name, _, _ in self.modules]
             if module_name not in module_names:
-                QMessageBox.warning(self, "Import Error", f"Module '{module_name}' not found.")
+                if not silent: QMessageBox.warning(self, "Import Error", f"Module '{module_name}' not found.")
                 logger.warning(f"Module '{module_name}' not found.")
                 return
             idx = module_names.index(module_name)
@@ -586,17 +586,17 @@ class ProcessingDialog(QDialog):
                                 val = group_dict[varname]
                                 self._set_widget_value(w, val)
         except Exception as e:
-            QMessageBox.warning(self, "Import Error", str(e))
+            if not silent: QMessageBox.warning(self, "Import Error", str(e))
             logger.warning(f"Import Error: {e}")
 
-    def export_params(self, file_path = None):
+    def export_params(self, file_path = None, silent = False):
         try:
             params = self.get_params(includeBaseParams=False) # excluse base parameters
             # Add module name
             module_name = self.modules[self.module_combo.currentIndex()][0]
             params = {'module': module_name, **params}
         except Exception as e:
-            QMessageBox.warning(self, "Export Error", str(e))
+            if not silent: QMessageBox.warning(self, "Export Error", str(e))
             logger.warning(f"Export Error: {e}")
             return
         if not file_path: # If not supplied, we simply ask
@@ -606,8 +606,10 @@ class ProcessingDialog(QDialog):
         try:
             with open(file_path, 'w') as f:
                 json.dump(params, f, indent=2)
+            if not silent: QMessageBox.information(self, "Export Successful", "Parameters exported successfully.")
+            logger.information("Parameters exported successfully.")
         except Exception as e:
-            QMessageBox.warning(self, "Export Error", str(e))
+            if not silent: QMessageBox.warning(self, "Export Error", str(e))
             logger.warning(f"Export Error: {e}")
 
     def accept(self):

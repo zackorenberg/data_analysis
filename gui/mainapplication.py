@@ -1,3 +1,12 @@
+# Import localvars before anything else, so settings file loads
+from localvars import (
+    RAW_DATA_DIR, PREPROCESSED_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR,
+    DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE, REREAD_DATAFILE_ON_EDIT, PROCESSING_MODULES_DIR,
+    PLOT_MODULE_CACHING_ENABLED, PLOT_MODULE_CACHE_FILE, SETTINGS_FILE, # Import new settings variables
+    _get_nested_value, get_current_settings, get_caching_method_name, get_widget_instance_attr, # Changed get_caching_function to get_caching_method_name
+    CACHING_MODULES_REGISTRY, SETTINGS_DIRECTORY # Import the registry
+)
+
 import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QDialog
 from gui.mpl_canvas import MplCanvas
@@ -15,9 +24,9 @@ import json
 from gui.line_list_widget import LineListWidget
 from logger import get_logger
 import logging
-from localvars import RAW_DATA_DIR, PREPROCESSED_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR, DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE, REREAD_DATAFILE_ON_EDIT, PROCESSING_MODULES_DIR
 from gui.processing_dialog import ProcessingDialog
 from gui.plot_module_widget import PlotModuleWidget
+from gui.settings_widget import SettingsDialog
 
 logger = get_logger(__name__)
 
@@ -203,6 +212,11 @@ class MainWindow(QMainWindow):
 
         self._setup_file_tree_context_menu()
 
+
+
+
+        self._load_cached_modules_on_startup()
+
     def _add_mpl_canvas(self):
         """
         Adds/Resets the MplCanvas widget fully by deleting the old canvas and toolbar
@@ -255,6 +269,14 @@ class MainWindow(QMainWindow):
         refresh_plot_action = QAction("Refresh Plot", self)
         refresh_plot_action.triggered.connect(self.reset_plot_and_params)
         file_menu.addAction(refresh_plot_action)
+
+        #replot_action = QAction("Replot", self)
+        #replot_action.triggered.connect(self.redraw_plot)
+        #file_menu.addAction(replot_action)
+
+        settings_action = QAction("Settings", self)
+        settings_action.triggered.connect(self._open_settings_dialog)
+        file_menu.addAction(settings_action)
 
         # Add more file actions as needed
 
@@ -544,7 +566,7 @@ class MainWindow(QMainWindow):
         plt.show()
         self.clear_status_message()
 
-    def export_plot_config(self, file_path = None):
+    def export_plot_config(self, file_path = None, silent=False):
         self.set_status_message("Exporting plot configuration...")
         if not file_path: # If not supplied, we simply ask
             file_path, _ = QFileDialog.getSaveFileName(self, "Export Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
@@ -585,7 +607,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Could not add plot line for file {file}: {e}")
 
-    def import_plot_config(self, file_path = None):
+    def import_plot_config(self, file_path = None, silent=False):
         self.set_status_message("Importing plot configuration...")
         if not file_path: # If not supplied, we simply ask
             file_path, _ = QFileDialog.getOpenFileName(self, "Import Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
@@ -658,7 +680,7 @@ class MainWindow(QMainWindow):
             logger.info(f"Line visibility toggled idx={idx}, visible={visible}")
         else:
             logger.error(f"Error toggling line visibility: {idx} is out of range")
-
+    # TODO: Add clear plot option which removes all lines
     def remove_plot_line(self, idx):
         logger.debug(f"Removing plot line idx={idx}")
         if 0 <= idx < len(self.plotted_lines):
@@ -791,6 +813,136 @@ class MainWindow(QMainWindow):
         self.redraw_plot()
         self.canvas.update_visuals(self.global_params, self.plot_modules)
         self.plot_dock.raise_()
+
+
+
+    ###################### Settings and caching #########################
+    def _open_settings_dialog(self):
+        """Opens the application settings dialog."""
+        settings_dialog = SettingsDialog(self)
+        settings_dialog.settings_saved.connect(self._on_settings_saved)
+        settings_dialog.exec_()
+
+    def _on_settings_saved(self, restart_required):
+        """Handles actions after settings are saved."""
+        current_settings = get_current_settings()  # Get latest settings after save
+
+        self._handle_module_caching(current_settings, on_close=False)
+
+        # --- Restart Prompt ---
+        if restart_required:
+            reply = QMessageBox.question(
+                self, "Restart Required",
+                "Some settings changes require an application restart to take full effect. Restart now?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                QApplication.quit()
+                python = sys.executable
+                os.execl(python, python, *sys.argv)
+
+    def _load_cached_modules_on_startup(self):
+        """Attempts to load configurations from cache for all registered modules on startup."""
+        current_settings = get_current_settings()  # Get latest settings
+
+        for module_key, cache_info in CACHING_MODULES_REGISTRY.items():
+            enable_caching = _get_nested_value(current_settings, ["caching", module_key, "enable"])
+            cache_file = _get_nested_value(current_settings, ["caching", module_key, "cache_file"])
+
+            if not enable_caching:
+                logger.info(f"{module_key} caching is disabled.")
+                continue
+
+            if not cache_file:
+                logger.warning(f"Cache file not defined for {module_key}. Skipping load from cache.")
+                continue
+
+            abs_cache_path = os.path.join(SETTINGS_DIRECTORY, cache_file)
+
+            if os.path.exists(abs_cache_path):
+                import_method_name = get_caching_method_name(module_key, "import_method_name")  # Get method name
+                widget_instance_attr = get_widget_instance_attr(module_key)
+
+                if not import_method_name or (widget_instance_attr != 'self' and not hasattr(self, widget_instance_attr)):
+                    logger.error(
+                        f"Caching method '{import_method_name}' or widget instance '{widget_instance_attr}' not found for {module_key}. Cannot load from cache.")
+                    continue
+
+
+                widget_instance = getattr(self, widget_instance_attr) if widget_instance_attr != 'self' else self
+                import_method = getattr(widget_instance, import_method_name)  # Get the bound method
+
+                try:
+                    import_method(file_path=abs_cache_path, silent=True)  # Call the bound method
+                    logger.info(f"Loaded {module_key} configuration from cache: {abs_cache_path}")
+                except Exception as e:
+                    logger.error(f"Failed to load cached {module_key}: {e}")
+                    QMessageBox.warning(self, "Caching Error", f"Failed to load cached {module_key}: {e}")
+            else:
+                logger.info(f"{module_key} caching enabled, but no cache file found at {abs_cache_path}.")
+
+    # NEW: Override closeEvent to save cached modules on application exit
+    def closeEvent(self, event):
+        """
+        Overrides the default close event to save cached module configurations
+        before the application exits.
+        """
+        logger.debug("Application close event triggered. Attempting to save cached modules.")
+        self._handle_module_caching(get_current_settings(),
+                                    on_close=True)  # Pass current settings and on_close=True
+        event.accept()  # Accept the close event, allowing the application to exit
+
+    def _handle_module_caching(self, current_settings, on_close=False):
+        """
+        Handles saving or removing cached module configurations based on settings.
+        This function is called by _on_settings_saved and closeEvent.
+
+        :param current_settings: The current application settings dictionary.
+        :param on_close: Boolean, True if called during application shutdown.
+        """
+        for module_key, cache_info in CACHING_MODULES_REGISTRY.items():
+            enable_caching = _get_nested_value(current_settings, ["caching", module_key, "enable"])
+            cache_file = _get_nested_value(current_settings, ["caching", module_key, "cache_file"])
+
+            if not cache_file:
+                logger.warning(f"Cache file not defined for {module_key}. Skipping caching operations.")
+                continue
+
+            abs_cache_path = os.path.join(SETTINGS_DIRECTORY, cache_file)
+
+            export_method_name = get_caching_method_name(module_key, "export_method_name")
+            widget_instance_attr = get_widget_instance_attr(module_key)
+
+            if not export_method_name or (widget_instance_attr != 'self' and not hasattr(self, widget_instance_attr)):
+                logger.error(
+                    f"Caching method '{export_method_name}' or widget instance '{widget_instance_attr}' not found for {module_key}. Cannot perform caching.")
+                continue
+
+            widget_instance = getattr(self, widget_instance_attr) if widget_instance_attr != 'self' else self
+            export_method = getattr(widget_instance, export_method_name)
+
+            if enable_caching:
+                try:
+                    export_method(file_path=abs_cache_path, silent=True)  # Always silent for this internal call
+                    log_msg = f"{module_key} configuration cached to {abs_cache_path}"
+                    if on_close:
+                        logger.info(f"{log_msg} on close.")
+                    else:
+                        logger.info(log_msg)
+                except Exception as e:
+                    err_msg = f"Failed to cache {module_key}: {e}"
+                    logger.error(err_msg, exc_info=True)  # Log full traceback
+                    if not on_close:  # Only show QMessageBox if not on close
+                        QMessageBox.warning(self, "Caching Error", err_msg)
+            else:  # Caching is disabled
+                if not on_close:  # Only remove file if not on close (and it's explicitly disabled)
+                    if os.path.exists(abs_cache_path):
+                        try:
+                            os.remove(abs_cache_path)
+                            logger.info(f"Removed {module_key} cache file: {abs_cache_path}")
+                        except Exception as e:
+                            logger.warning(f"Failed to remove {module_key} cache file: {e}")
+
 
 def main():
     app = QApplication(sys.argv)

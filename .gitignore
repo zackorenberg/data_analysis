@@ -6,6 +6,9 @@ data/postprocessed/*
 data/plots/*
 data/*
 
+# The settings directory should be configured by the user
+settings/*
+
 # Data and settings specifics
 *.dat
 *.json
