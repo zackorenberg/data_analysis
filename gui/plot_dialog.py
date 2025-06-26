@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit, QPushButton, QFormLayout, QTextEdit, QColorDialog)
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit, QPushButton, QFormLayout, QTextEdit, QColorDialog, QLayout)
 from PyQt5.QtCore import pyqtSignal, QSize, Qt
 from PyQt5.QtGui import QColor, QPainter, QPen
 
@@ -174,6 +174,7 @@ class PlotParamDialog(QDialog):
         btns.addWidget(apply_btn)
         btns.addWidget(cancel_btn)
         layout.addLayout(btns)
+        layout.setSizeConstraint(QLayout.SetFixedSize)
         self.setLayout(layout)
 
     def choose_color(self):

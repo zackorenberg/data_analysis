@@ -1,8 +1,8 @@
 import sys
-from PyQt5.QtWidgets import QApplication, QMainWindow
+from PyQt5.QtWidgets import QApplication, QMainWindow, QDialog
 from gui.mpl_canvas import MplCanvas
 from gui.plot_dialog import PlotParamDialog
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QFileSystemModel, QTabWidget, QAction, QFileDialog, QMenuBar, QListWidget, QListWidgetItem, QMessageBox, QDockWidget, QLabel, QSizePolicy, QPushButton, QInputDialog)
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QFileSystemModel, QTabWidget, QAction, QFileDialog, QMenuBar, QListWidget, QListWidgetItem, QMessageBox, QDockWidget, QLabel, QSizePolicy, QPushButton, QInputDialog, QMenu)
 from PyQt5.QtCore import Qt
 import os
 from DataManagement.data_reader import read_data_file
@@ -15,9 +15,66 @@ import json
 from gui.line_list_widget import LineListWidget
 from logger import get_logger
 import logging
-from localvars import RAW_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR, DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE
+from localvars import RAW_DATA_DIR, PREPROCESSED_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR, DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE, PROCESSING_MODULES_DIR
+from gui.processing_dialog import ProcessingDialog
 
 logger = get_logger(__name__)
+
+def prepare_plot_data(df, params, logger=None):
+    """
+    Given a DataFrame and params dict, return processed x, y arrays for plotting.
+    Handles calculation fields, min/max masks, and custom mask expressions.
+    """
+    if 'x' not in params or 'y' not in params:
+        raise ValueError("x and y must be specified in params")
+    x = df[params['x']]
+    y = df[params['y']]
+    if x is None or y is None:
+        raise ValueError("x and y must be valid columns in the DataFrame")
+    # Calculation for x
+    if 'calc_x' in params:
+        np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        local_env = {'x': x, 'y': y}
+        local_env.update(np_env)
+        try:
+            x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
+        except Exception as e:
+            if logger:
+                logger.error(f"X calculation error: {params['calc_x']}: {e}")
+    # Calculation for y
+    if 'calc_y' in params:
+        np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        local_env = {'x': x, 'y': y}
+        local_env.update(np_env)
+        try:
+            y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
+        except Exception as e:
+            if logger:
+                logger.error(f"Y calculation error: {params['calc_y']}: {e}")
+    mask = np.ones(len(x), dtype=bool)
+    if 'minx' in params:
+        mask &= x >= float(params['minx'])
+    if 'maxx' in params:
+        mask &= x <= float(params['maxx'])
+    if 'miny' in params:
+        mask &= y >= float(params['miny'])
+    if 'maxy' in params:
+        mask &= y <= float(params['maxy'])
+    # Custom mask expressions
+    if 'mask_exprs' in params:
+        np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        local_env = {'x': x, 'y': y}
+        local_env.update(np_env)
+        for expr in params['mask_exprs']:
+            try:
+                mask_expr = eval(expr, {"__builtins__": {}}, local_env)
+                mask &= mask_expr
+            except Exception as e:
+                if logger:
+                    logger.error(f"Mask expression error: {expr}: {e}")
+    x = x[mask]
+    y = y[mask]
+    return x, y
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -48,6 +105,19 @@ class MainWindow(QMainWindow):
         self.raw_tree.setHeaderHidden(True)
         self.raw_tree.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.tabs.addTab(self._make_tab_widget(self.raw_tree, "Raw Data"), "Raw Data")
+
+        # Preprocessed Data tab (inserted between Raw and Postprocessed)
+        if not os.path.exists(PREPROCESSED_DATA_DIR):
+            os.makedirs(PREPROCESSED_DATA_DIR)
+        self.pre_model = QFileSystemModel()
+        self.pre_model.setRootPath(PREPROCESSED_DATA_DIR)
+        self.pre_tree = QTreeView()
+        self.pre_tree.setModel(self.pre_model)
+        self.pre_tree.setRootIndex(self.pre_model.index(PREPROCESSED_DATA_DIR))
+        self.pre_tree.setColumnWidth(0, 250)
+        self.pre_tree.setHeaderHidden(True)
+        self.pre_tree.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.tabs.insertTab(1, self._make_tab_widget(self.pre_tree, "Preprocessed Data"), "Preprocessed Data")
 
         # Postprocessed Data tab
         if not os.path.exists(POSTPROCESSED_DATA_DIR):
@@ -111,8 +181,11 @@ class MainWindow(QMainWindow):
         # Connect file tree double-clicks
         self.raw_tree.doubleClicked.connect(lambda idx: self.handle_file_double_click(idx, 'raw'))
         self.post_tree.doubleClicked.connect(lambda idx: self.handle_file_double_click(idx, 'post'))
+        self.pre_tree.doubleClicked.connect(lambda idx: self.handle_file_double_click(idx, 'pre'))
 
         self.global_params = {}
+
+        self._setup_file_tree_context_menu()
 
     def _create_menubar(self):
         menubar = self.menuBar()
@@ -145,6 +218,9 @@ class MainWindow(QMainWindow):
         import_cfg_action = QAction("Import Plot Configuration", self)
         import_cfg_action.triggered.connect(self.import_plot_config)
         file_menu.addAction(import_cfg_action)
+        append_cfg_action = QAction("Append Plot Configuration", self)
+        append_cfg_action.triggered.connect(self.append_plot_config)
+        file_menu.addAction(append_cfg_action)
 
     def save_plot(self):
         options = QFileDialog.Options()
@@ -172,8 +248,13 @@ class MainWindow(QMainWindow):
     def handle_file_double_click(self, index, tree_type):
         if tree_type == 'raw':
             model = self.raw_model
-        else:
+        elif tree_type == 'pre':
+            model = self.pre_model
+        elif tree_type == 'post':
             model = self.post_model
+        else:
+            logging.error(f"Invalid tree type: {tree_type}")
+            return
         file_path = model.filePath(index)
         if os.path.isdir(file_path):
             return
@@ -191,48 +272,12 @@ class MainWindow(QMainWindow):
     def add_plot_line(self, file_path, df, params, comments):
         logger.debug(f"Adding plot line for file: {file_path}, params: {params}")
         self.set_status_message("Adding plot line...")
-        x = df[params['x']]
-        y = df[params['y']]
-        # Calculation for x
-        if 'calc_x' in params:
-            np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
-            local_env = {'x': x, 'y': y}
-            local_env.update(np_env)
-            try:
-                x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
-            except Exception as e:
-                print(f"X calculation error: {params['calc_x']}: {e}")
-        # Calculation for y
-        if 'calc_y' in params:
-            np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
-            local_env = {'x': x, 'y': y}
-            local_env.update(np_env)
-            try:
-                y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
-            except Exception as e:
-                print(f"Y calculation error: {params['calc_y']}: {e}")
-        mask = np.ones(len(x), dtype=bool)
-        if 'minx' in params:
-            mask &= x >= float(params['minx'])
-        if 'maxx' in params:
-            mask &= x <= float(params['maxx'])
-        if 'miny' in params:
-            mask &= y >= float(params['miny'])
-        if 'maxy' in params:
-            mask &= y <= float(params['maxy'])
-        # Custom mask expressions
-        if 'mask_exprs' in params:
-            np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
-            local_env = {'x': x, 'y': y}
-            local_env.update(np_env)
-            for expr in params['mask_exprs']:
-                try:
-                    mask_expr = eval(expr, {"__builtins__": {}}, local_env)
-                    mask &= mask_expr
-                except Exception as e:
-                    print(f"Mask expression error: {expr}: {e}")
-        x = x[mask]
-        y = y[mask]
+        try:
+            x, y = prepare_plot_data(df, params, logger)
+        except Exception as e:
+            logger.error(f"Error preparing plot data for file: {file_path}, params: {params}, error: {e}")
+            QMessageBox.warning(self, "Error", f"Could not prepare plot data for file:\n{file_path}\n{e}")
+            return
         if 'legend' in params:
             label = params['legend']
         else:
@@ -277,47 +322,12 @@ class MainWindow(QMainWindow):
     def update_plot_line(self, file_path, df, params, idx):
         logger.debug(f"Updating plot line idx={idx}, file={file_path}, params={params}")
         self.set_status_message("Updating plot line...")
-        x = df[params['x']]
-        y = df[params['y']]
-        # Calculation for x
-        if 'calc_x' in params:
-            np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
-            local_env = {'x': x, 'y': y}
-            local_env.update(np_env)
-            try:
-                x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
-            except Exception as e:
-                print(f"X calculation error: {params['calc_x']}: {e}")
-        # Calculation for y
-        if 'calc_y' in params:
-            np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
-            local_env = {'x': x, 'y': y}
-            local_env.update(np_env)
-            try:
-                y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
-            except Exception as e:
-                print(f"Y calculation error: {params['calc_y']}: {e}")
-        mask = np.ones(len(x), dtype=bool)
-        if 'minx' in params:
-            mask &= x >= float(params['minx'])
-        if 'maxx' in params:
-            mask &= x <= float(params['maxx'])
-        if 'miny' in params:
-            mask &= y >= float(params['miny'])
-        if 'maxy' in params:
-            mask &= y <= float(params['maxy'])
-        if 'mask_exprs' in params:
-            np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
-            local_env = {'x': x, 'y': y}
-            local_env.update(np_env)
-            for expr in params['mask_exprs']:
-                try:
-                    mask_expr = eval(expr, {"__builtins__": {}}, local_env)
-                    mask &= mask_expr
-                except Exception as e:
-                    print(f"Mask expression error: {expr}: {e}")
-        x = x[mask]
-        y = y[mask]
+        try:
+            x, y = prepare_plot_data(df, params, logger)
+        except Exception as e:
+            logger.error(f"Error preparing updated plot data for file: {file_path}, params: {params}, error: {e}")
+            QMessageBox.warning(self, "Error", f"Could not prepare updated plot data for file:\n{file_path}\n{e}")
+            return
         line = self.plotted_lines[idx]['line']
         line.set_xdata(x)
         line.set_ydata(y)
@@ -328,6 +338,9 @@ class MainWindow(QMainWindow):
         self.plotted_lines[idx]['params'] = params
         self.plotted_lines[idx]['line'] = line
         # Update label in custom widget
+        
+        self.canvas.set_line_style_and_color(line, params)
+        # TODO: make this better?
         self.line_list_widget.list_widget.itemWidget(self.line_list_widget.list_widget.item(idx)).layout().itemAt(1).widget().setText(line.get_label())
         self.canvas.axes.relim()
         self.canvas.apply_plot_params(self.global_params)
@@ -364,47 +377,12 @@ class MainWindow(QMainWindow):
                 logger.error(f"Error reading file {line_info['file']}: {e}")
                 continue
             params = line_info['params']
-            x = df[params['x']]
-            y = df[params['y']]
-            # Calculation for x
-            if 'calc_x' in params:
-                np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
-                local_env = {'x': x, 'y': y}
-                local_env.update(np_env)
-                try:
-                    x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
-                except Exception as e:
-                    print(f"X calculation error: {params['calc_x']}: {e}")
-            # Calculation for y
-            if 'calc_y' in params:
-                np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
-                local_env = {'x': x, 'y': y}
-                local_env.update(np_env)
-                try:
-                    y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
-                except Exception as e:
-                    print(f"Y calculation error: {params['calc_y']}: {e}")
-            mask = np.ones(len(x), dtype=bool)
-            if 'minx' in params:
-                mask &= x >= float(params['minx'])
-            if 'maxx' in params:
-                mask &= x <= float(params['maxx'])
-            if 'miny' in params:
-                mask &= y >= float(params['miny'])
-            if 'maxy' in params:
-                mask &= y <= float(params['maxy'])
-            if 'mask_exprs' in params:
-                np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
-                local_env = {'x': x, 'y': y}
-                local_env.update(np_env)
-                for expr in params['mask_exprs']:
-                    try:
-                        mask_expr = eval(expr, {"__builtins__": {}}, local_env)
-                        mask &= mask_expr
-                    except Exception as e:
-                        print(f"Mask expression error: {expr}: {e}")
-            x = x[mask]
-            y = y[mask]
+            try:
+                x, y = prepare_plot_data(df, params, logger)
+            except Exception as e:
+                logger.error(f"Error redrawing plot data for file: {line_info['file']}, params: {params}, error: {e}")
+                QMessageBox.warning(self, "Error", f"Could not redraw plot data for file:\n{line_info['file']}\n{e}")
+                continue
             label = params.get('legend', line_info['file'])
             line, = self.canvas.axes.plot(x, y, label=label)
             line_info['line'] = line
@@ -445,47 +423,12 @@ class MainWindow(QMainWindow):
         for line_info in self.plotted_lines:
             df, _, _, _ = read_data_file(line_info['file'])
             params = line_info['params']
-            x = df[params['x']]
-            y = df[params['y']]
-            # Calculation for x
-            if 'calc_x' in params:
-                np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
-                local_env = {'x': x, 'y': y}
-                local_env.update(np_env)
-                try:
-                    x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
-                except Exception as e:
-                    print(f"X calculation error: {params['calc_x']}: {e}")
-            # Calculation for y
-            if 'calc_y' in params:
-                np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
-                local_env = {'x': x, 'y': y}
-                local_env.update(np_env)
-                try:
-                    y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
-                except Exception as e:
-                    print(f"Y calculation error: {params['calc_y']}: {e}")
-            mask = np.ones(len(x), dtype=bool)
-            if 'minx' in params:
-                mask &= x >= float(params['minx'])
-            if 'maxx' in params:
-                mask &= x <= float(params['maxx'])
-            if 'miny' in params:
-                mask &= y >= float(params['miny'])
-            if 'maxy' in params:
-                mask &= y <= float(params['maxy'])
-            if 'mask_exprs' in params:
-                np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
-                local_env = {'x': x, 'y': y}
-                local_env.update(np_env)
-                for expr in params['mask_exprs']:
-                    try:
-                        mask_expr = eval(expr, {"__builtins__": {}}, local_env)
-                        mask &= mask_expr
-                    except Exception as e:
-                        print(f"Mask expression error: {expr}: {e}")
-            x = x[mask]
-            y = y[mask]
+            try:
+                x, y = prepare_plot_data(df, params, logger)
+            except Exception as e:
+                logger.error(f"Error preparing for export plot data for file: {line_info['file']}, params: {params}, error: {e}")
+                QMessageBox.warning(self, "Error", f"Could not prepare for export plot data for file:\n{line_info['file']}\n{e}")
+                continue
             label = params.get('legend', line_info['file'])
             plot_kwargs = {}
             if 'color' in params:
@@ -553,6 +496,18 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.set_status_message(f"Export failed: {e}", 5000)
 
+
+    def __add_plot_line_from_config(self, line_info):
+        file = line_info['file']
+        params = line_info['params']
+        comments = line_info.get('comments', [])
+        try:
+            df, _, _, _ = read_data_file(file)
+        except Exception as e:
+            logger.error(f"Could not read file {file}: {e}")
+            return
+        self.add_plot_line(file, df, params, comments)
+
     def import_plot_config(self):
         self.set_status_message("Importing plot configuration...")
         from PyQt5.QtWidgets import QFileDialog
@@ -569,15 +524,7 @@ class MainWindow(QMainWindow):
             self.plotted_lines = []
             # Restore lines
             for line_info in config.get('plotted_lines', []):
-                file = line_info['file']
-                params = line_info['params']
-                comments = line_info.get('comments', [])
-                try:
-                    df, _, _, _ = read_data_file(file)
-                except Exception as e:
-                    print(f"Could not read file {file}: {e}")
-                    continue
-                self.add_plot_line(file, df, params, comments)
+                self.__add_plot_line_from_config(line_info)
             # Restore global params
             global_params = config.get('global_params', {})
             self.global_params = global_params
@@ -588,6 +535,30 @@ class MainWindow(QMainWindow):
             self.set_status_message(f"Imported plot configuration from {file_path}", 5000)
         except Exception as e:
             self.set_status_message(f"Import failed: {e}", 5000)
+
+    def append_plot_config(self):
+        self.set_status_message("Appending plot configuration...")
+        from PyQt5.QtWidgets import QFileDialog
+        file_path, _ = QFileDialog.getOpenFileName(self, "Append Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
+        if not file_path:
+            self.set_status_message("")
+            return
+        try:
+            with open(file_path, 'r') as f:
+                config = json.load(f)
+            # Restore lines
+            for line_info in config.get('plotted_lines', []):
+                self.__add_plot_line_from_config(line_info)
+            # Restore global params
+            global_params = config.get('global_params', {})
+            self.global_params = global_params
+            self.canvas.apply_plot_params(global_params)
+            self.canvas.figure.tight_layout()
+            self.canvas.draw()
+            self.update_param_widget_fields_from_plot()
+            self.set_status_message(f"Appended plot configuration from {file_path}", 5000)
+        except Exception as e:
+            self.set_status_message(f"Append failed: {e}", 5000)
 
     # TODO: Add option to use numpy.loadtxt instead of pandas.read_csv for data reading
 
@@ -629,6 +600,78 @@ class MainWindow(QMainWindow):
     #def _on_item_double_clicked(self, item):
     #    idx = self.line_list_widget.list_widget.row(item)
     #    self.edit_line_params(idx)
+
+    def _setup_file_tree_context_menu(self):
+        self.raw_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.raw_tree.customContextMenuRequested.connect(lambda pos: self._show_file_context_menu(self.raw_tree, pos, 'raw'))
+        self.post_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.post_tree.customContextMenuRequested.connect(lambda pos: self._show_file_context_menu(self.post_tree, pos, 'post'))
+        self.pre_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.pre_tree.customContextMenuRequested.connect(lambda pos: self._show_file_context_menu(self.pre_tree, pos, 'pre'))
+
+    def _show_file_context_menu(self, tree, pos, tree_type):
+        index = tree.indexAt(pos)
+        if not index.isValid():
+            return
+        model = self.raw_model if tree_type == 'raw' else self.post_model
+        if tree_type == 'raw':
+            model = self.raw_model
+        elif tree_type == 'post':
+            model = self.post_model
+        elif tree_type == 'pre':
+            model = self.pre_model
+        else:
+            logging.error(f"Invalid tree type: {tree_type}")
+            return
+        file_path = model.filePath(index)
+        if os.path.isdir(file_path):
+            return
+        menu = QMenu()
+        preprocess_action = QAction('Preprocess with...', self)
+        postprocess_action = QAction('Postprocess with...', self)
+        preprocess_action.triggered.connect(lambda: self._run_processing_dialog(file_path, 'pre'))
+        postprocess_action.triggered.connect(lambda: self._run_processing_dialog(file_path, 'post'))
+        menu.addAction(preprocess_action)
+        menu.addAction(postprocess_action)
+        menu.exec_(tree.viewport().mapToGlobal(pos))
+
+    def _run_processing_dialog(self, file_path, mode):
+        # Load columns for dropdowns using data_reader
+        self.set_status_message(f"Waiting on processing dialog for {file_path} in {mode} mode...")
+        columns = []
+        df = None
+        try:
+            df, _, _, _ = read_data_file(file_path)
+            columns = list(df.columns)
+        except Exception as e:
+            logger.warning(f'Could not read columns from {file_path}: {e}')
+        try:
+            dialog = ProcessingDialog(file_path, module_type=mode, data_columns=columns, parent=self)
+            if dialog.exec_() == QDialog.Accepted:
+                module_name, module_cls, params = dialog.get_selected_module()
+                if module_name is None:
+                    logger.warning(f"No module selected for {file_path} in {mode} mode")
+                    raise Exception("No module selected")
+                logger.info(f"Processing {file_path} with {module_name} in {mode} mode...")
+                self.set_status_message(f"Processing {file_path} with {module_name} in {mode} mode...")
+                # Determine output dir based on mode
+                if mode == 'pre':
+                    output_dir = PREPROCESSED_DATA_DIR
+                else:
+                    output_dir = POSTPROCESSED_DATA_DIR
+                module = module_cls(file_path, output_dir, params, df)
+                try:
+                    module.load()
+                    module.process()
+                    module.save()
+                    QMessageBox.information(self, "Processing Complete", f"Processing complete. Output saved to {output_dir}")
+                except Exception as e:
+                    QMessageBox.warning(self, "Processing Error", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "Dialog Error", str(e))
+            #raise e
+
+        self.clear_status_message()
 
 def main():
     app = QApplication(sys.argv)
