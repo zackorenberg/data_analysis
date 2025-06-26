@@ -20,6 +20,51 @@ from gui.processing_dialog import ProcessingDialog
 
 logger = get_logger(__name__)
 
+def _perform_plot_calcs(x, y, params, logger=None):
+    if 'calc_x' in params:
+        np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        local_env = {'x': x, 'y': y}
+        local_env.update(np_env)
+        try:
+            x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
+        except Exception as e:
+            if logger:
+                logger.error(f"X calculation error: {params['calc_x']}: {e}")
+    # Calculation for y
+    if 'calc_y' in params:
+        np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        local_env = {'x': x, 'y': y}
+        local_env.update(np_env)
+        try:
+            y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
+        except Exception as e:
+            if logger:
+                logger.error(f"Y calculation error: {params['calc_y']}: {e}")
+    mask = np.ones(len(x), dtype=bool)
+    if 'minx' in params:
+        mask &= x >= float(params['minx'])
+    if 'maxx' in params:
+        mask &= x <= float(params['maxx'])
+    if 'miny' in params:
+        mask &= y >= float(params['miny'])
+    if 'maxy' in params:
+        mask &= y <= float(params['maxy'])
+    # Custom mask expressions
+    if 'mask_exprs' in params:
+        np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        local_env = {'x': x, 'y': y}
+        local_env.update(np_env)
+        for expr in params['mask_exprs']:
+            try:
+                mask_expr = eval(expr, {"__builtins__": {}}, local_env)
+                mask &= mask_expr
+            except Exception as e:
+                if logger:
+                    logger.error(f"Mask expression error: {expr}: {e}")
+    x = x[mask]
+    y = y[mask]
+    return x, y
+
 def _prepare_simple_plot_data(df, params, logger=None):
     """
     Given a DataFrame and params dict, return processed x, y arrays for plotting.
@@ -31,6 +76,10 @@ def _prepare_simple_plot_data(df, params, logger=None):
     y = df[params['y']]
     if x is None or y is None:
         raise ValueError("x and y must be valid columns in the DataFrame")
+
+    return _perform_plot_calcs(x, y, params, logger=logger)
+    #return x, y
+
     # Calculation for x
     if 'calc_x' in params:
         np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
@@ -113,6 +162,8 @@ def _prepare_multi_plot_data(df, params, logger=None):
         logger.error(f"Error evaluating y_expression '{y_expr}': {e}")
         raise ValueError(f"Error in Y-Axis Expression: {e}")
 
+
+    return _perform_plot_calcs(x_data, y_data, params, logger=logger)
     return x_data, y_data
 
 def prepare_plot_data(df, params, logger=None):
