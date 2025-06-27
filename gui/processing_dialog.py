@@ -3,7 +3,7 @@ from PyQt5.QtCore import Qt
 import json
 import os
 from DataManagement.module_loader import discover_modules
-from processing_base import BasePreprocessingModule, BasePostprocessingModule
+from processing_base import BaseProcessingModule
 import re
 from localvars import PROCESSING_MODULES_DIR
 from logger import get_logger
@@ -357,15 +357,21 @@ class ProcessingDialog(QDialog):
             if not required:
                 w.addItem("")
             w.addItems(self.data_columns)
-        elif typ == 'checkbox':
+        elif typ == 'checkbox' or typ == bool:
             w = QCheckBox()
         elif typ == 'label':
             w = QLabel(str(placeholder) if placeholder else '')
         else:
             w = QLineEdit()
+
+        # Lets add the metadata as properties on the widget itself so we don't have to deal with the headache of searching for them
+        w.setProperty('typ', typ)
+        w.setProperty('placeholder', placeholder)
+        w.setProperty('required', required)
+
         if placeholder and hasattr(w, 'setPlaceholderText') and typ not in ('label', 'checkbox'):
             w.setPlaceholderText(str(placeholder))
-        if typ == 'checkbox' and placeholder:
+        if typ in [bool, 'checkbox'] and placeholder:
             w.setChecked(bool(placeholder))
         return w
 
@@ -389,6 +395,8 @@ class ProcessingDialog(QDialog):
                 except Exception as e:
                     logger.warning(f"Error converting value to type {typ}: {e}")
                     return val
+            else:
+                logger.warning(f"Type {typ} is not a valid type")
             return val
         # Fallback
         if hasattr(w, 'text'):
@@ -420,14 +428,16 @@ class ProcessingDialog(QDialog):
             if hasattr(self, 'base_param_widgets') and name in self.base_param_widgets:
                 logger.warning(f"Skipping parameter: {name}, already exists as base parameter")
                 continue
-            typ = None
-            placeholder = None
+            typ = w.property('typ') or str
+            placeholder = w.property('placeholder') or ''
             params[name] = self._get_widget_value(w, typ, placeholder)
         # Multi-value params
         for base_name, widgets in multi_param_widgets.items():
             values = []
             for w, _ in widgets:
-                v = self._get_widget_value(w, None)
+                typ = w.property('typ') or str
+                placeholder = w.property('placeholder') or ''
+                v = self._get_widget_value(w, typ, placeholder)
                 if v != "":
                     values.append(v)
             params[base_name] = values
@@ -443,7 +453,9 @@ class ProcessingDialog(QDialog):
                         varname = self.widget_to_varname.get(w)
                         if not varname:
                             continue
-                        v = self._get_widget_value(w, None)
+                        typ = w.property('typ') or str
+                        placeholder = w.property('placeholder') or ''
+                        v = self._get_widget_value(w, typ, placeholder)
                         if v != "":
                             group_params[varname] = v
                 if len(group_params.keys()):
@@ -505,10 +517,11 @@ class ProcessingDialog(QDialog):
                     if not group_values:
                         raise ValueError(f"At least one group required for '{label}'.")
 
-    def import_params(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Import Parameters", "", "JSON Files (*.json)")
-        if not file_path:
-            return
+    def import_params(self, file_path = None):
+        if not file_path: # If not supplied, we simply ask
+            file_path, _ = QFileDialog.getOpenFileName(self, "Import Parameters", "", "JSON Files (*.json)")
+            if not file_path:
+                return
         try:
             with open(file_path, 'r') as f:
                 params = json.load(f)
@@ -588,7 +601,7 @@ class ProcessingDialog(QDialog):
             QMessageBox.warning(self, "Import Error", str(e))
             logger.warning(f"Import Error: {e}")
 
-    def export_params(self):
+    def export_params(self, file_path = None):
         try:
             params = self.get_params(includeBaseParams=False) # excluse base parameters
             # Add module name
@@ -598,9 +611,10 @@ class ProcessingDialog(QDialog):
             QMessageBox.warning(self, "Export Error", str(e))
             logger.warning(f"Export Error: {e}")
             return
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export Parameters", "params.json", "JSON Files (*.json)")
-        if not file_path:
-            return
+        if not file_path: # If not supplied, we simply ask
+            file_path, _ = QFileDialog.getSaveFileName(self, "Export Parameters", "params.json", "JSON Files (*.json)")
+            if not file_path:
+                return
         try:
             with open(file_path, 'w') as f:
                 json.dump(params, f, indent=2)

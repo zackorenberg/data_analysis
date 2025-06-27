@@ -1,7 +1,7 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QDialog
 from gui.mpl_canvas import MplCanvas
-from gui.plot_dialog import PlotParamDialog
+from gui.plot_dialog import PlotParamDialog, CalcPlotParamDialog
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QFileSystemModel, QTabWidget, QAction, QFileDialog, QMenuBar, QListWidget, QListWidgetItem, QMessageBox, QDockWidget, QLabel, QSizePolicy, QPushButton, QInputDialog, QMenu)
 from PyQt5.QtCore import Qt
 import os
@@ -15,12 +15,58 @@ import json
 from gui.line_list_widget import LineListWidget
 from logger import get_logger
 import logging
-from localvars import RAW_DATA_DIR, PREPROCESSED_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR, DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE, PROCESSING_MODULES_DIR
+from localvars import RAW_DATA_DIR, PREPROCESSED_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR, DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE, REREAD_DATAFILE_ON_EDIT, PROCESSING_MODULES_DIR
 from gui.processing_dialog import ProcessingDialog
+from gui.plot_module_widget import PlotModuleWidget
 
 logger = get_logger(__name__)
 
-def prepare_plot_data(df, params, logger=None):
+def _perform_plot_calcs(x, y, params, logger=None):
+    if 'calc_x' in params:
+        np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        local_env = {'x': x, 'y': y}
+        local_env.update(np_env)
+        try:
+            x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
+        except Exception as e:
+            if logger:
+                logger.error(f"X calculation error: {params['calc_x']}: {e}")
+    # Calculation for y
+    if 'calc_y' in params:
+        np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        local_env = {'x': x, 'y': y}
+        local_env.update(np_env)
+        try:
+            y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
+        except Exception as e:
+            if logger:
+                logger.error(f"Y calculation error: {params['calc_y']}: {e}")
+    mask = np.ones(len(x), dtype=bool)
+    if 'minx' in params:
+        mask &= x >= float(params['minx'])
+    if 'maxx' in params:
+        mask &= x <= float(params['maxx'])
+    if 'miny' in params:
+        mask &= y >= float(params['miny'])
+    if 'maxy' in params:
+        mask &= y <= float(params['maxy'])
+    # Custom mask expressions
+    if 'mask_exprs' in params:
+        np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        local_env = {'x': x, 'y': y}
+        local_env.update(np_env)
+        for expr in params['mask_exprs']:
+            try:
+                mask_expr = eval(expr, {"__builtins__": {}}, local_env)
+                mask &= mask_expr
+            except Exception as e:
+                if logger:
+                    logger.error(f"Mask expression error: {expr}: {e}")
+    x = x[mask]
+    y = y[mask]
+    return x, y
+
+def _prepare_simple_plot_data(df, params, logger=None):
     """
     Given a DataFrame and params dict, return processed x, y arrays for plotting.
     Handles calculation fields, min/max masks, and custom mask expressions.
@@ -31,6 +77,10 @@ def prepare_plot_data(df, params, logger=None):
     y = df[params['y']]
     if x is None or y is None:
         raise ValueError("x and y must be valid columns in the DataFrame")
+
+    return _perform_plot_calcs(x, y, params, logger=logger)
+    #return x, y
+
     # Calculation for x
     if 'calc_x' in params:
         np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
@@ -75,6 +125,56 @@ def prepare_plot_data(df, params, logger=None):
     x = x[mask]
     y = y[mask]
     return x, y
+
+def _prepare_multi_plot_data(df, params, logger=None):
+    """
+    Prepares data by evaluating expressions with user-defined variables.
+    """
+    definitions = params.get('definitions', {})
+    x_expr = params.get('x_expression')
+    y_expr = params.get('y_expression')
+
+    if not all([definitions, x_expr, y_expr]):
+        raise ValueError("Multi-column plot is missing definitions or expressions.")
+
+    # Build the local environment for eval()
+    local_env = {}
+    for var_name, col_name in definitions.items():
+        if col_name in df.columns:
+            local_env[var_name] = df[col_name]
+        else:
+            raise ValueError(f"Column '{col_name}' defined for variable '{var_name}' not found in data.")
+
+    # Add numpy functions for convenience
+    np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+    local_env.update(np_env)
+
+    try:
+        x_data = eval(x_expr, {"__builtins__": {}}, local_env)
+        logger.debug(f"Evaluated x_expression '{x_expr}' successfully.")
+    except Exception as e:
+        logger.error(f"Error evaluating x_expression '{x_expr}': {e}")
+        raise ValueError(f"Error in X-Axis Expression: {e}")
+
+    try:
+        y_data = eval(y_expr, {"__builtins__": {}}, local_env)
+        logger.debug(f"Evaluated y_expression '{y_expr}' successfully.")
+    except Exception as e:
+        logger.error(f"Error evaluating y_expression '{y_expr}': {e}")
+        raise ValueError(f"Error in Y-Axis Expression: {e}")
+
+
+    return _perform_plot_calcs(x_data, y_data, params, logger=logger)
+    return x_data, y_data
+
+def prepare_plot_data(df, params, logger=None):
+    """
+    Dispatcher function that calls the correct data preparation function based on 'plot_type'
+    """
+    if params.get('plot_type') == 'multi_column':
+        return _prepare_multi_plot_data(df, params, logger)
+    else:
+        return _prepare_simple_plot_data(df, params, logger)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -139,15 +239,20 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.LeftDockWidgetArea, self.data_browser_dock)
 
         # Matplotlib plot area dock
-        self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
-        self.toolbar = NavigationToolbar(self.canvas, self)
+        #self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
+        #self.toolbar = NavigationToolbar(self.canvas, self)
         self.plot_widget = QWidget()
+        self.canvas = None # Will be created in next call
+        self.toolbar = None # Will be created in next call
+        self._add_mpl_canvas()
+        """
         plot_layout = QVBoxLayout()
         plot_layout.setContentsMargins(0, 0, 0, 0)
         plot_layout.setSpacing(0)
         plot_layout.addWidget(self.toolbar)
         plot_layout.addWidget(self.canvas)
         self.plot_widget.setLayout(plot_layout)
+        """
         self.plot_dock = QDockWidget("Plot Area", self)
         self.plot_dock.setWidget(self.plot_widget)
         self.plot_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
@@ -175,8 +280,18 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(self.plot_dock, self.param_widget)
         self.plot_dock.raise_()
 
+        # Plot modules widget
+        self.plot_module_widget = PlotModuleWidget(parent=self)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.plot_module_widget)
+        self.plot_module_widget.modulesChanged.connect(self.on_plot_modules_changed)
+
+        # Tabify with parameter widget
+        self.tabifyDockWidget(self.param_widget, self.plot_module_widget)
+        self.plot_dock.raise_()
+
         # Store plot info
         self.plotted_lines = []  # List of dicts: {file, params, line}
+        self.plot_modules = []  # List of active plot module instances
 
         # Connect file tree double-clicks
         self.raw_tree.doubleClicked.connect(lambda idx: self.handle_file_double_click(idx, 'raw'))
@@ -186,6 +301,46 @@ class MainWindow(QMainWindow):
         self.global_params = {}
 
         self._setup_file_tree_context_menu()
+
+    def _add_mpl_canvas(self):
+        """
+        Adds/Resets the MplCanvas widget fully by deleting the old canvas and toolbar
+        and creating new ones in their place. This ensures a clean slate for the plot.
+        """
+        logger.debug("Creating new MplCanvas and toolbar.")
+
+        # Get the existing layout or create a new one if it doesn't exist.
+        plot_layout = self.plot_widget.layout()
+        if plot_layout:
+            # Clear existing widgets from the layout
+            while plot_layout.count():
+                item = plot_layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()  # Schedule old widgets for deletion
+        else:
+            # If no layout exists (first call), create one and set it
+            plot_layout = QVBoxLayout()
+            plot_layout.setContentsMargins(0, 0, 0, 0)
+            plot_layout.setSpacing(0)
+            self.plot_widget.setLayout(plot_layout)
+
+        # Now, current_plot_layout is guaranteed to exist and be empty.
+        # The old self.canvas and self.toolbar references are already cleared by deleteLater()
+        # from the previous iteration, if any.
+
+        # Create new MplCanvas and NavigationToolbar instances
+        # Use the same dimensions as the initial setup
+        self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
+        self.toolbar = NavigationToolbar(self.canvas, self)
+
+        # Add the new toolbar and canvas to the current layout
+        plot_layout.addWidget(self.toolbar)
+        plot_layout.addWidget(self.canvas)
+
+        logger.info("Added MplCanvas and toolbar.")
+
+    # ... (rest of the MainWindow class)
 
     def _create_menubar(self):
         menubar = self.menuBar()
@@ -253,7 +408,7 @@ class MainWindow(QMainWindow):
         elif tree_type == 'post':
             model = self.post_model
         else:
-            logging.error(f"Invalid tree type: {tree_type}")
+            logger.error(f"Invalid tree type: {tree_type}")
             return
         file_path = model.filePath(index)
         if os.path.isdir(file_path):
@@ -266,6 +421,21 @@ class MainWindow(QMainWindow):
         columns = list(df.columns)
         self._last_file_info = {'comments': comments, 'meta': meta, 'filetype': ftype, 'file_path': file_path, 'df': df}
         dialog = PlotParamDialog(columns, parent=self, comments=comments)
+        dialog.paramsSelected.connect(lambda params, fp=file_path, d=df: self.add_plot_line(fp, d, params, comments))
+        dialog.exec_()
+
+    def handle_file_plot_math(self, file_path): # Plots math
+        if os.path.isdir(file_path):
+            return
+        try:
+            df, comments, meta, ftype = read_data_file(file_path)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not read file:\n{file_path}\n{e}")
+            return
+        columns = list(df.columns)
+        self._last_file_info = {'comments': comments, 'meta': meta, 'filetype': ftype, 'file_path': file_path, 'df': df}
+
+        dialog = CalcPlotParamDialog(columns, parent=self, comments=comments)
         dialog.paramsSelected.connect(lambda params, fp=file_path, d=df: self.add_plot_line(fp, d, params, comments))
         dialog.exec_()
 
@@ -292,10 +462,12 @@ class MainWindow(QMainWindow):
         
         line, = self.canvas.axes.plot(x, y, label=label, **plot_kwargs)
         self.canvas.set_line_style_and_color(line, params)
-        self.canvas.apply_plot_params(self.global_params) # Reapply global params
-        self.canvas.figure.tight_layout()
-        self.canvas.draw()
-        line_info = {'file': file_path, 'params': params, 'line': line, 'comments': comments}
+
+        self.canvas.update_visuals(self.global_params, self.plot_modules)
+        #self.canvas.apply_plot_params(self.global_params) # Reapply global params
+        #self.canvas.figure.tight_layout()
+        #self.canvas.draw()
+        line_info = {'file': file_path, 'df': df, 'params': params, 'line': line, 'comments': comments}
         self.plotted_lines.append(line_info)
         self.line_list_widget.add_line(label, visible=True)
         logger.info(f"Plot line added: {label}")
@@ -308,14 +480,21 @@ class MainWindow(QMainWindow):
             file_path = line_info['file']
             params = line_info['params']
             comments = line_info.get('comments', [])
-            try:
-                df, _, _, _ = read_data_file(file_path)
-            except Exception as e:
-                logger.error(f"Could not read file {file_path}: {e}")
-                QMessageBox.warning(self, "Error", f"Could not read file:\n{file_path}\n{e}")
-                return
+            if REREAD_DATAFILE_ON_EDIT:
+                try:
+                    df, _, _, _ = read_data_file(file_path)
+                except Exception as e:
+                    logger.error(f"Could not read file {file_path}: {e}")
+                    QMessageBox.warning(self, "Error", f"Could not read file:\n{file_path}\n{e}")
+                    return
+            else:
+                df = line_info['df']
+
             columns = list(df.columns)
-            dialog = PlotParamDialog(columns, current_params=params, parent=self, comments=comments)
+            if params.get('plot_type') == 'multi_column':
+                dialog = CalcPlotParamDialog(columns, parent=self, current_params=params, comments=comments)
+            else:
+                dialog = PlotParamDialog(columns, current_params=params, parent=self, comments=comments)
             dialog.paramsSelected.connect(lambda new_params, fp=file_path, d=df, idx=idx: self.update_plot_line(fp, d, new_params, idx))
             dialog.exec_()
 
@@ -334,18 +513,24 @@ class MainWindow(QMainWindow):
         if 'legend' in params:
             line.set_label(params['legend'])
         else:
-            line.set_label(f"{params['y']} vs {params['x']}")
+            try:
+                line.set_label(f"{params['y']} vs {params['x']}")
+            except: # TODO: make sure the x/y are supplied via expressions
+                line.set_label(f"{os.path.basename(file_path)}")
         self.plotted_lines[idx]['params'] = params
         self.plotted_lines[idx]['line'] = line
+        self.plotted_lines[idx]['df'] = df # Only if rereading is enabled, otherwise makes no difference
         # Update label in custom widget
         
         self.canvas.set_line_style_and_color(line, params)
         # TODO: make this better?
         self.line_list_widget.list_widget.itemWidget(self.line_list_widget.list_widget.item(idx)).layout().itemAt(1).widget().setText(line.get_label())
         self.canvas.axes.relim()
-        self.canvas.apply_plot_params(self.global_params)
-        self.canvas.figure.tight_layout()
-        self.canvas.draw()
+
+        self.canvas.update_visuals(self.global_params, self.plot_modules)
+        #self.canvas.apply_plot_params(self.global_params)
+        #self.canvas.figure.tight_layout()
+        #self.canvas.draw()
         logger.info(f"Plot line updated at idx={idx}")
         self.clear_status_message()
         
@@ -357,9 +542,10 @@ class MainWindow(QMainWindow):
     def apply_global_plot_params(self, params):
         self.set_status_message("Applying global plot parameters...")
         self.global_params = params
-        self.canvas.apply_plot_params(params)
-        self.canvas.figure.tight_layout()
-        self.canvas.draw()
+        self.canvas.update_visuals(self.global_params, self.plot_modules)
+        #self.canvas.apply_plot_params(params)
+        #self.canvas.figure.tight_layout()
+        #self.canvas.draw()
         self.plot_dock.raise_() # Show plot now
         self.clear_status_message()
 
@@ -371,11 +557,14 @@ class MainWindow(QMainWindow):
         logger.debug("Redrawing plot with current plotted_lines.")
         self.canvas.axes.clear()
         for line_info in self.plotted_lines:
+            df = line_info['df']
+            """
             try:
                 df, _, _, _ = read_data_file(line_info['file'])
             except Exception as e:
                 logger.error(f"Error reading file {line_info['file']}: {e}")
                 continue
+            """
             params = line_info['params']
             try:
                 x, y = prepare_plot_data(df, params, logger)
@@ -393,9 +582,12 @@ class MainWindow(QMainWindow):
         logger.debug("Resetting plot and parameters...")
         self.set_status_message("Resetting plot and parameters...")
         self.redraw_plot()
-        self.canvas.apply_plot_params({'legend': True})
-        self.canvas.figure.tight_layout()
-        self.canvas.draw()
+        # TODO: reset all plot modules
+        # self.plot_modules.reset.emit() or something along those lines
+        self.canvas.update_visuals({'legend': True}, self.plot_modules)
+        #self.canvas.apply_plot_params({'legend': True})
+        #self.canvas.figure.tight_layout()
+        #self.canvas.draw()
         self.param_widget.title_edit.clear()
         self.param_widget.xlabel_edit.clear()
         self.param_widget.ylabel_edit.clear()
@@ -421,7 +613,8 @@ class MainWindow(QMainWindow):
             return
         fig, ax = plt.subplots(figsize=(w, h))
         for line_info in self.plotted_lines:
-            df, _, _, _ = read_data_file(line_info['file'])
+            df = line_info['df']
+            #df, _, _, _ = read_data_file(line_info['file'])
             params = line_info['params']
             try:
                 x, y = prepare_plot_data(df, params, logger)
@@ -471,17 +664,17 @@ class MainWindow(QMainWindow):
         plt.show()
         self.clear_status_message()
 
-    def export_plot_config(self):
+    def export_plot_config(self, file_path = None):
         self.set_status_message("Exporting plot configuration...")
-        from PyQt5.QtWidgets import QFileDialog
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
-        if not file_path:
-            self.set_status_message("")
-            return
+        if not file_path: # If not supplied, we simply ask
+            file_path, _ = QFileDialog.getSaveFileName(self, "Export Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
+            if not file_path:
+                self.set_status_message("")
+                return
         # Prepare config dict
         config = {
             'plotted_lines': [
-                {
+                { # This is all we need, everything else gets created in add_plot_line()
                     'file': line['file'],
                     'params': line['params'],
                     'comments': line.get('comments', [])
@@ -506,15 +699,19 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Could not read file {file}: {e}")
             return
-        self.add_plot_line(file, df, params, comments)
 
-    def import_plot_config(self):
+        try:
+            self.add_plot_line(file, df, params, comments)
+        except Exception as e:
+            logger.error(f"Could not add plot line for file {file}: {e}")
+
+    def import_plot_config(self, file_path = None):
         self.set_status_message("Importing plot configuration...")
-        from PyQt5.QtWidgets import QFileDialog
-        file_path, _ = QFileDialog.getOpenFileName(self, "Import Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
-        if not file_path:
-            self.set_status_message("")
-            return
+        if not file_path: # If not supplied, we simply ask
+            file_path, _ = QFileDialog.getOpenFileName(self, "Import Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
+            if not file_path:
+                self.set_status_message("")
+                return
         try:
             with open(file_path, 'r') as f:
                 config = json.load(f)
@@ -528,21 +725,22 @@ class MainWindow(QMainWindow):
             # Restore global params
             global_params = config.get('global_params', {})
             self.global_params = global_params
-            self.canvas.apply_plot_params(global_params)
-            self.canvas.figure.tight_layout()
-            self.canvas.draw()
+            self.canvas.update_visuals(self.global_params, self.plot_modules)
+            #self.canvas.apply_plot_params(global_params)
+            #self.canvas.figure.tight_layout()
+            #self.canvas.draw()
             self.update_param_widget_fields_from_plot()
             self.set_status_message(f"Imported plot configuration from {file_path}", 5000)
         except Exception as e:
             self.set_status_message(f"Import failed: {e}", 5000)
 
-    def append_plot_config(self):
+    def append_plot_config(self, file_path = None):
         self.set_status_message("Appending plot configuration...")
-        from PyQt5.QtWidgets import QFileDialog
-        file_path, _ = QFileDialog.getOpenFileName(self, "Append Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
-        if not file_path:
-            self.set_status_message("")
-            return
+        if not file_path: # If not supplied, we simply ask
+            file_path, _ = QFileDialog.getOpenFileName(self, "Append Plot Configuration", DEFAULT_PLOT_CONFIG, "JSON Files (*.json)")
+            if not file_path:
+                self.set_status_message("")
+                return
         try:
             with open(file_path, 'r') as f:
                 config = json.load(f)
@@ -552,9 +750,11 @@ class MainWindow(QMainWindow):
             # Restore global params
             global_params = config.get('global_params', {})
             self.global_params = global_params
-            self.canvas.apply_plot_params(global_params)
-            self.canvas.figure.tight_layout()
-            self.canvas.draw()
+
+            self.canvas.update_visuals(self.global_params, self.plot_modules)
+            #self.canvas.apply_plot_params(global_params)
+            #self.canvas.figure.tight_layout()
+            #self.canvas.draw()
             self.update_param_widget_fields_from_plot()
             self.set_status_message(f"Appended plot configuration from {file_path}", 5000)
         except Exception as e:
@@ -590,9 +790,11 @@ class MainWindow(QMainWindow):
             self.plotted_lines.pop(idx)
             self.line_list_widget.remove_line(idx)
             self.redraw_plot()
-            self.canvas.apply_plot_params(self.global_params)
-            self.canvas.figure.tight_layout()
-            self.canvas.draw()
+
+            self.canvas.update_visuals(self.global_params, self.plot_modules)
+            #self.canvas.apply_plot_params(self.global_params)
+            #self.canvas.figure.tight_layout()
+            #self.canvas.draw()
             logger.info(f"Plot line removed idx={idx}")
         else:
             logger.error(f"Error removing line: {idx} is out of range")
@@ -621,12 +823,18 @@ class MainWindow(QMainWindow):
         elif tree_type == 'pre':
             model = self.pre_model
         else:
-            logging.error(f"Invalid tree type: {tree_type}")
+            logger.error(f"Invalid tree type: {tree_type}")
             return
         file_path = model.filePath(index)
         if os.path.isdir(file_path):
             return
         menu = QMenu()
+        # Math action
+        plot_math_action = QAction('Plot with expression...', self)
+        plot_math_action.triggered.connect(lambda: self.handle_file_plot_math(file_path = file_path))
+        menu.addAction(plot_math_action)
+        menu.addSeparator()
+        # Preprocess/Postprocess actions
         preprocess_action = QAction('Preprocess with...', self)
         postprocess_action = QAction('Postprocess with...', self)
         preprocess_action.triggered.connect(lambda: self._run_processing_dialog(file_path, 'pre'))
@@ -640,7 +848,7 @@ class MainWindow(QMainWindow):
         self.set_status_message(f"Waiting on processing dialog for {file_path} in {mode} mode...")
         columns = []
         df = None
-        try:
+        try: # Reread if plotted because, we shouldn't assume its already loaded
             df, _, _, _ = read_data_file(file_path)
             columns = list(df.columns)
         except Exception as e:
@@ -673,8 +881,45 @@ class MainWindow(QMainWindow):
 
         self.clear_status_message()
 
+    def reload_plot_modules(self):
+        """
+        This is to force a reload on all plot modules if, say, the rcParams are changed externally
+
+        for use with updated rcparams from global table
+        """
+        logger.debug("Reloading plot modules...")
+        self.plot_module_widget._reload_modules() # Silent reload
+        modules = self.plot_module_widget.export_modules()
+        for module in self.plot_modules:
+            module.disable(self.canvas.axes)
+        self.plot_modules = modules
+        logger.debug("Plot modules reloaded.")
+
+    def on_plot_modules_changed(self, modules):
+        """Handle plot module changes"""
+        reset_plot = False
+
+        # Disable previous modules
+        for module in self.plot_modules:
+            reset_plot |= (module.disable(self.canvas.axes) or module.reset_plot) # In the event of a None, default to false
+
+        # Add new modules
+        self.plot_modules = modules
+        logger.info(f"Plot modules changed: {[m.name for m in modules]}")
+        # Run initialize functions, should any need to be initialized before plotting (i.e. when plot reset is required
+        for module in modules:  # Note, initialize() will return True only when a reset is desired
+            reset_plot |= (module.initialize() or module.reset_plot)  # Run possible initialize function
+        # Incase a module modifies global parameters heavily and needs a reset
+        if reset_plot:
+            logger.info("Plot module(s) require plot reset.")
+            self._add_mpl_canvas()
+        # Redraw the plot to apply the new modules
+        self.redraw_plot()
+        self.canvas.update_visuals(self.global_params, self.plot_modules)
+        self.plot_dock.raise_()
+
 def main():
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    sys.exit(app.exec_()) 
+    sys.exit(app.exec_())
