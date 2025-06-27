@@ -1,7 +1,7 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QDialog
 from gui.mpl_canvas import MplCanvas
-from gui.plot_dialog import PlotParamDialog
+from gui.plot_dialog import PlotParamDialog, CalcPlotParamDialog
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QFileSystemModel, QTabWidget, QAction, QFileDialog, QMenuBar, QListWidget, QListWidgetItem, QMessageBox, QDockWidget, QLabel, QSizePolicy, QPushButton, QInputDialog, QMenu)
 from PyQt5.QtCore import Qt
 import os
@@ -20,7 +20,52 @@ from gui.processing_dialog import ProcessingDialog
 
 logger = get_logger(__name__)
 
-def prepare_plot_data(df, params, logger=None):
+def _perform_plot_calcs(x, y, params, logger=None):
+    if 'calc_x' in params:
+        np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        local_env = {'x': x, 'y': y}
+        local_env.update(np_env)
+        try:
+            x = eval(params['calc_x'], {"__builtins__": {}}, local_env)
+        except Exception as e:
+            if logger:
+                logger.error(f"X calculation error: {params['calc_x']}: {e}")
+    # Calculation for y
+    if 'calc_y' in params:
+        np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        local_env = {'x': x, 'y': y}
+        local_env.update(np_env)
+        try:
+            y = eval(params['calc_y'], {"__builtins__": {}}, local_env)
+        except Exception as e:
+            if logger:
+                logger.error(f"Y calculation error: {params['calc_y']}: {e}")
+    mask = np.ones(len(x), dtype=bool)
+    if 'minx' in params:
+        mask &= x >= float(params['minx'])
+    if 'maxx' in params:
+        mask &= x <= float(params['maxx'])
+    if 'miny' in params:
+        mask &= y >= float(params['miny'])
+    if 'maxy' in params:
+        mask &= y <= float(params['maxy'])
+    # Custom mask expressions
+    if 'mask_exprs' in params:
+        np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        local_env = {'x': x, 'y': y}
+        local_env.update(np_env)
+        for expr in params['mask_exprs']:
+            try:
+                mask_expr = eval(expr, {"__builtins__": {}}, local_env)
+                mask &= mask_expr
+            except Exception as e:
+                if logger:
+                    logger.error(f"Mask expression error: {expr}: {e}")
+    x = x[mask]
+    y = y[mask]
+    return x, y
+
+def _prepare_simple_plot_data(df, params, logger=None):
     """
     Given a DataFrame and params dict, return processed x, y arrays for plotting.
     Handles calculation fields, min/max masks, and custom mask expressions.
@@ -31,6 +76,10 @@ def prepare_plot_data(df, params, logger=None):
     y = df[params['y']]
     if x is None or y is None:
         raise ValueError("x and y must be valid columns in the DataFrame")
+
+    return _perform_plot_calcs(x, y, params, logger=logger)
+    #return x, y
+
     # Calculation for x
     if 'calc_x' in params:
         np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
@@ -75,6 +124,56 @@ def prepare_plot_data(df, params, logger=None):
     x = x[mask]
     y = y[mask]
     return x, y
+
+def _prepare_multi_plot_data(df, params, logger=None):
+    """
+    Prepares data by evaluating expressions with user-defined variables.
+    """
+    definitions = params.get('definitions', {})
+    x_expr = params.get('x_expression')
+    y_expr = params.get('y_expression')
+
+    if not all([definitions, x_expr, y_expr]):
+        raise ValueError("Multi-column plot is missing definitions or expressions.")
+
+    # Build the local environment for eval()
+    local_env = {}
+    for var_name, col_name in definitions.items():
+        if col_name in df.columns:
+            local_env[var_name] = df[col_name]
+        else:
+            raise ValueError(f"Column '{col_name}' defined for variable '{var_name}' not found in data.")
+
+    # Add numpy functions for convenience
+    np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+    local_env.update(np_env)
+
+    try:
+        x_data = eval(x_expr, {"__builtins__": {}}, local_env)
+        logger.debug(f"Evaluated x_expression '{x_expr}' successfully.")
+    except Exception as e:
+        logger.error(f"Error evaluating x_expression '{x_expr}': {e}")
+        raise ValueError(f"Error in X-Axis Expression: {e}")
+
+    try:
+        y_data = eval(y_expr, {"__builtins__": {}}, local_env)
+        logger.debug(f"Evaluated y_expression '{y_expr}' successfully.")
+    except Exception as e:
+        logger.error(f"Error evaluating y_expression '{y_expr}': {e}")
+        raise ValueError(f"Error in Y-Axis Expression: {e}")
+
+
+    return _perform_plot_calcs(x_data, y_data, params, logger=logger)
+    return x_data, y_data
+
+def prepare_plot_data(df, params, logger=None):
+    """
+    Dispatcher function that calls the correct data preparation function based on 'plot_type'
+    """
+    if params.get('plot_type') == 'multi_column':
+        return _prepare_multi_plot_data(df, params, logger)
+    else:
+        return _prepare_simple_plot_data(df, params, logger)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -269,6 +368,21 @@ class MainWindow(QMainWindow):
         dialog.paramsSelected.connect(lambda params, fp=file_path, d=df: self.add_plot_line(fp, d, params, comments))
         dialog.exec_()
 
+    def handle_file_plot_math(self, file_path): # Plots math
+        if os.path.isdir(file_path):
+            return
+        try:
+            df, comments, meta, ftype = read_data_file(file_path)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not read file:\n{file_path}\n{e}")
+            return
+        columns = list(df.columns)
+        self._last_file_info = {'comments': comments, 'meta': meta, 'filetype': ftype, 'file_path': file_path, 'df': df}
+
+        dialog = CalcPlotParamDialog(columns, parent=self, comments=comments)
+        dialog.paramsSelected.connect(lambda params, fp=file_path, d=df: self.add_plot_line(fp, d, params, comments))
+        dialog.exec_()
+
     def add_plot_line(self, file_path, df, params, comments):
         logger.debug(f"Adding plot line for file: {file_path}, params: {params}")
         self.set_status_message("Adding plot line...")
@@ -315,7 +429,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Error", f"Could not read file:\n{file_path}\n{e}")
                 return
             columns = list(df.columns)
-            dialog = PlotParamDialog(columns, current_params=params, parent=self, comments=comments)
+            if params.get('plot_type') == 'multi_column':
+                dialog = CalcPlotParamDialog(columns, parent=self, current_params=params, comments=comments)
+            else:
+                dialog = PlotParamDialog(columns, current_params=params, parent=self, comments=comments)
             dialog.paramsSelected.connect(lambda new_params, fp=file_path, d=df, idx=idx: self.update_plot_line(fp, d, new_params, idx))
             dialog.exec_()
 
@@ -334,7 +451,10 @@ class MainWindow(QMainWindow):
         if 'legend' in params:
             line.set_label(params['legend'])
         else:
-            line.set_label(f"{params['y']} vs {params['x']}")
+            try:
+                line.set_label(f"{params['y']} vs {params['x']}")
+            except: # TODO: make sure the x/y are supplied via expressions
+                line.set_label(f"{os.path.basename(file_path)}")
         self.plotted_lines[idx]['params'] = params
         self.plotted_lines[idx]['line'] = line
         # Update label in custom widget
@@ -627,6 +747,12 @@ class MainWindow(QMainWindow):
         if os.path.isdir(file_path):
             return
         menu = QMenu()
+        # Math action
+        plot_math_action = QAction('Plot with expression...', self)
+        plot_math_action.triggered.connect(lambda: self.handle_file_plot_math(file_path = file_path))
+        menu.addAction(plot_math_action)
+        menu.addSeparator()
+        # Preprocess/Postprocess actions
         preprocess_action = QAction('Preprocess with...', self)
         postprocess_action = QAction('Postprocess with...', self)
         preprocess_action.triggered.connect(lambda: self._run_processing_dialog(file_path, 'pre'))
