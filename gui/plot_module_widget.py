@@ -272,10 +272,10 @@ class PlotModuleWidget(QDockWidget):
         self._reload_modules()
         self.apply_modules()
 
-    def apply_modules(self):
+    def apply_modules(self, silent = False):
         """Instantiates selected modules with their configs and emits the signal."""
         enabled_instances = self.export_modules()
-        QMessageBox.information(self, "Modules Applied", f"Applied {len(enabled_instances)} plot module(s).")
+        if not silent: QMessageBox.information(self, "Modules Applied", f"Applied {len(enabled_instances)} plot module(s).")
         self.modulesChanged.emit(enabled_instances) # Do i keep this here?
 
     def export_modules(self):
@@ -308,7 +308,7 @@ class PlotModuleWidget(QDockWidget):
         return enabled_instances
 
 
-    def export_module_config(self, file_path = None):
+    def export_module_config(self, file_path = None, silent = False):
         """Saves the current module selections and configurations to a JSON file."""
         logger.debug("Exporting module configuration.")
 
@@ -324,13 +324,14 @@ class PlotModuleWidget(QDockWidget):
         try:
             with open(file_path, 'w') as f:
                 json.dump(config_data, f, indent=2)
-            QMessageBox.information(self, "Export Successful", f"Module configuration saved to:\n{file_path}")
+            if not silent: QMessageBox.information(self, "Export Successful", f"Module configuration saved to:\n{file_path}")
+            else: logger.info(f"Module configuration saved to:\n{file_path}")
         except Exception as e:
-            QMessageBox.warning(self, "Export Error", f"Failed to save configuration: {e}")
+            if not silent: QMessageBox.warning(self, "Export Error", f"Failed to save configuration: {e}")
             logger.error(f"Failed to export module config: {e}")
 
 
-    def import_module_config(self, file_path = None):
+    def import_module_config(self, file_path = None, silent = False):
         """Loads module selections and configurations from a JSON file."""
         logger.debug("Importing module configuration.")
 
@@ -343,13 +344,14 @@ class PlotModuleWidget(QDockWidget):
             with open(file_path, 'r') as f:
                 config_data = json.load(f)
         except Exception as e:
-            QMessageBox.warning(self, "Import Error", f"Failed to read or parse file: {e}")
+            if not silent: QMessageBox.warning(self, "Import Error", f"Failed to read or parse file: {e}")
             logger.error(f"Failed to import module config: {e}")
             return
 
         # Validate the imported data
         if 'active_modules' not in config_data or 'configurations' not in config_data:
-            QMessageBox.warning(self, "Import Error", "Invalid configuration file format.")
+            if not silent: QMessageBox.warning(self, "Import Error", "Invalid configuration file format.")
+            logger.warning("Invalid configuration file format.")
             return
 
         # Update the internal state
@@ -361,7 +363,7 @@ class PlotModuleWidget(QDockWidget):
         self._check_modules(active_modules_to_check)
 
         # Apply the changes
-        self.apply_modules()
+        self.apply_modules(silent = silent)
         logger.info("Module configuration loaded and applied.")
 
 
