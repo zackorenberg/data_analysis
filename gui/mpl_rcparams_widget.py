@@ -2,15 +2,20 @@ import sys
 import json
 import os
 from PyQt5.QtWidgets import (
-    QDialog, QLayout, QSizePolicy, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QPushButton, QLineEdit, QLabel, QMessageBox, QApplication, QComboBox, QCheckBox, QWidget, QListWidget, QListWidgetItem, QTabWidget
+    QDialog, QLayout, QSizePolicy, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QPushButton, QLineEdit, QLabel, QMessageBox, QApplication, QComboBox, QCheckBox, QWidget, QListWidget, QListWidgetItem, QTabWidget, QFileDialog
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QBrush, QColor
 import matplotlib as mpl
+import cycler # dependancy for mpl
 from matplotlib.rcsetup import validate_bool
 import matplotlib.pyplot as plt
 import re
 import numpy as np
+
+from logger import get_logger
+logger = get_logger(__name__)
+
 
 
 # There is a bug in matplotlib where the rcParams['backend'] is an object instead of a string when first loading the module.
@@ -25,7 +30,7 @@ except:
     pass
 # Save the default rcparams for use later
 default_rcparams = mpl.rcParamsDefault.copy()
-
+# default_rcparams = mpl.rcParams.copy()
 # Cache file path for just validators
 CACHE_FILE = os.path.join(os.path.dirname(__file__), ".rcparams_validators_cache.json")
 
@@ -43,12 +48,12 @@ def load_rcparams_cache():
         cached_version = cache_data.get('matplotlib_version')
         
         if cached_version != current_version:
-            print(f"Matplotlib version changed from {cached_version} to {current_version}. Regenerating cache...")
+            logger.info(f"Matplotlib version changed from {cached_version} to {current_version}. Regenerating cache...")
             return None # Generates new cache automatically if None is returned
         
         return cache_data.get('validators', {})
     except Exception as e:
-        print(f"Error loading rcParams cache: {e}")
+        logger.error(f"Error loading rcParams cache: {e}")
         return None
 
 def save_rcparams_cache(validators):
@@ -60,9 +65,9 @@ def save_rcparams_cache(validators):
         }
         with open(CACHE_FILE, 'w') as f:
             json.dump(cache_data, f, indent=2)
-        print(f"rcParams cache saved to {CACHE_FILE}")
+        logger.info(f"rcParams cache saved to {CACHE_FILE}")
     except Exception as e:
-        print(f"Error saving rcParams cache: {e}")
+        logger.error(f"Error saving rcParams cache: {e}")
 
 def discover_rcparam_validators():
     """
@@ -72,37 +77,11 @@ def discover_rcparam_validators():
     # Try to load from cache first
     cached_validators = load_rcparams_cache()
     if cached_validators:
-        print("Using cached rcParams validators")
+        logger.info("Using cached rcParams validators")
         return cached_validators
     
-    print("Discovering rcParams validators...")
+    logger.info("Discovering rcParams validators...")
     validators = {}
-    test_values = {
-        'backend': ['invalid_backend', 'TkAgg', 'Qt5Agg', 'Qt4Agg', 'GTK3Agg', 'GTK4Agg', 'macosx', 'WXAgg'],
-        'lines.linestyle': ['invalid_style', '-', '--', '-.', ':', 'None', ' ', ''],
-        'lines.marker': ['.', 'o', 'v', '^', '<', '>', 's', 'p', '*', 'h', 'H', '+', 'x', 'D', 'd', '|', '_'],
-        'text.usetex': ['invalid_bool', True, False],
-        'axes.grid': ['invalid_bool', True, False],
-        'figure.dpi': ['invalid_dpi', 72, 100, 150, 300],
-        'savefig.dpi': ['invalid_dpi', 72, 100, 150, 300],
-        'font.size': ['invalid_size', 8, 10, 12, 14, 16, 18, 20],
-        'axes.labelsize': ['invalid_size', 8, 10, 12, 14, 16, 18, 20],
-        'xtick.labelsize': ['invalid_size', 8, 10, 12, 14, 16, 18, 20],
-        'ytick.labelsize': ['invalid_size', 8, 10, 12, 14, 16, 18, 20],
-        'legend.fontsize': ['invalid_size', 8, 10, 12, 14, 16, 18, 20],
-        'figure.figsize': ['invalid_size', (6, 4), (8, 6), (10, 8)],
-        'savefig.format': ['invalid_format', 'png', 'pdf', 'svg', 'jpg', 'jpeg'],
-        'image.cmap': ['invalid_cmap', 'viridis', 'plasma', 'inferno', 'magma', 'cividis'],
-        'axes.projection': ['invalid_proj', 'rectilinear', 'polar', '3d'],
-        'text.latex.preamble': ['invalid_preamble', '', '\\usepackage{amsmath}'],
-        'font.family': ['invalid_family', 'serif', 'sans-serif', 'monospace'],
-        'font.style': ['invalid_style', 'normal', 'italic', 'oblique'],
-        'font.weight': ['invalid_weight', 'normal', 'bold', 'light'],
-        'axes.spines.left': ['invalid_bool', True, False],
-        'axes.spines.right': ['invalid_bool', True, False],
-        'axes.spines.top': ['invalid_bool', True, False],
-        'axes.spines.bottom': ['invalid_bool', True, False],
-    }
     
     # Test each parameter with invalid values to discover validators
     for param_name in mpl.rcParams:
@@ -254,6 +233,21 @@ def get_changed_parameters():
             changed_params.append(param)
     return changed_params
 
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        print(type(obj))
+        if isinstance(obj, cycler.Cycler):
+            return str(obj)
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        return super(NumpyEncoder, self).default(obj)
+
 class ListEditorWidget(QWidget):
     """Custom widget for editing lists and tuples"""
     def __init__(self, value, parent=None):
@@ -342,6 +336,8 @@ class ListEditorWidget(QWidget):
 
 class ParameterTreeWidget(QTreeWidget):
     """Custom tree widget for displaying parameters"""
+    parameterChanged = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setHeaderLabels(["Parameter", "Value"])
@@ -350,7 +346,7 @@ class ParameterTreeWidget(QTreeWidget):
         self.changed_params = {}
         self.invalid_params = [] # Only hosts the keys of invalid parameters
         self.known_validators = {}
-        self.original_rcparams = mpl.rcParams.copy()
+        self.current_rcparams = mpl.rcParams.copy()
 
         self.brush_invalid = QBrush(QColor(255, 200, 200))
         self.brush_changed = QBrush(QColor(255, 255, 224))
@@ -423,7 +419,7 @@ class ParameterTreeWidget(QTreeWidget):
         return None
 
     def _create_param_item(self, parent, name, key):
-        value = self.original_rcparams[key]
+        value = self.changed_params.get(key, self.current_rcparams[key])
         item = QTreeWidgetItem([name])
         item.setData(0, Qt.UserRole, key)
         parent.addChild(item)
@@ -448,7 +444,7 @@ class ParameterTreeWidget(QTreeWidget):
             widget = ListEditorWidget(value)
             # Connect to the list widget's itemChanged signal
             widget.list_widget.itemChanged.connect(
-                lambda item, k=key, i=item: self._on_list_value_changed(k, i)
+                lambda changedItem, k=key, i=item: self._on_list_value_changed(k, i)
             )
         elif validator and hasattr(validator, 'valid'): # Handles ValidateInStrings and similar classes
             widget = QComboBox()
@@ -488,7 +484,7 @@ class ParameterTreeWidget(QTreeWidget):
             self.param_widgets[key] = widget
 
     def _on_value_changed(self, new_value_str, key, item):
-        original_value = self.original_rcparams[key]
+        original_value = self.current_rcparams[key]
         is_bool = isinstance(original_value, bool)
         original_value_str = str(original_value)
         
@@ -517,12 +513,14 @@ class ParameterTreeWidget(QTreeWidget):
             if key in self.changed_params:
                 del self.changed_params[key]
 
+        self.parameterChanged.emit()
+
     def _on_list_value_changed(self, key, item):
         """Handle changes in list/tuple editors"""
         widget = self.itemWidget(item, 1)
         if isinstance(widget, ListEditorWidget):
             new_value = widget.get_value()
-            original_value = self.original_rcparams[key]
+            original_value = self.current_rcparams[key]
             
             is_different = new_value != original_value
             
@@ -543,14 +541,16 @@ class ParameterTreeWidget(QTreeWidget):
                 if key in self.changed_params:
                     del self.changed_params[key]
 
+        self.parameterChanged.emit()
+
     def get_changed_params(self):
         """Get all changed parameters from all trees"""
         return self.changed_params.copy()
 
-    def refresh(self):
+    def refresh(self, clear=True):
         """Refresh the tree with current rcParams"""
-        self.original_rcparams = mpl.rcParams.copy()
-        self.changed_params.clear()
+        self.current_rcparams = mpl.rcParams.copy()
+        if clear: self.changed_params.clear()
         # Re-populate with current filter
         # This will be handled by the parent widget
 
@@ -570,8 +570,6 @@ class ParameterTreeWidget(QTreeWidget):
                 # This is a parameter item
                 item_key = child.data(0, Qt.UserRole)
                 if item_key == key:
-                    print("\n".join(["Working"]*10))
-
                     # Color the item red
                     brush = self.brush_invalid  # Light red for invalid
                     child.setBackground(0, brush)
@@ -610,7 +608,7 @@ class ParameterTreeWidget(QTreeWidget):
                 key = child.data(0, Qt.UserRole)
                 if key:
                     # Reset to appropriate coloring based on current state
-                    current_value = self.original_rcparams[key]
+                    current_value = self.current_rcparams[key]
                     if key in self.invalid_params:
                         brush = self.brush_invalid  # Light red for invalid
                     elif key in self.changed_params:
@@ -630,7 +628,7 @@ class MplRcParamsWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.original_rcparams = mpl.rcParams.copy()
+        self.current_rcparams = mpl.rcParams.copy()
         self.changed_params = {}
         self.known_validators = discover_rcparam_validators()  # Use discovered validators
         self._init_ui()
@@ -638,6 +636,16 @@ class MplRcParamsWidget(QWidget):
 
     def _init_ui(self):
         layout = QVBoxLayout()
+        layout.setContentsMargins(0,0,0,0)
+
+        style_layout = QHBoxLayout()
+        style_label = QLabel("Matplotlib Style:")
+        self.style_combo = QComboBox()
+        self.style_combo.addItems(['default', 'custom'] + plt.style.available)
+        self.style_combo.currentTextChanged.connect(self._on_style_changed)
+        style_layout.addWidget(style_label)
+        style_layout.addWidget(self.style_combo)
+        layout.addLayout(style_layout)
         
         # Create tab widget
         self.tab_widget = QTabWidget()
@@ -666,11 +674,16 @@ class MplRcParamsWidget(QWidget):
 
         # Button layout
         btn_layout = QHBoxLayout()
+
+        self.import_btn = QPushButton("Import")
+        self.export_btn = QPushButton("Export")
         self.refresh_btn = QPushButton("Refresh")
         self.apply_btn = QPushButton("Apply")
         self.reset_btn = QPushButton("Reset to Default")
         self.cancel_btn = QPushButton("Cancel")
-        
+
+        btn_layout.addWidget(self.import_btn)
+        btn_layout.addWidget(self.export_btn)
         btn_layout.addWidget(self.refresh_btn)
         btn_layout.addStretch()
         btn_layout.addWidget(self.apply_btn)
@@ -681,23 +694,52 @@ class MplRcParamsWidget(QWidget):
         self.setLayout(layout)
 
         # Connect signals
+        self.import_btn.clicked.connect(self._import_rcparams)
+        self.export_btn.clicked.connect(self._export_rcparams)
         self.refresh_btn.clicked.connect(self.refresh_all)
         self.apply_btn.clicked.connect(self.apply_changes)
         self.reset_btn.clicked.connect(self.reset_defaults)
         self.cancel_btn.clicked.connect(self.clear_changes)
 
-    def refresh_all(self):
+        # Connect changes
+        self.all_tree.parameterChanged.connect(self._on_param_change)
+        self.important_tree.parameterChanged.connect(self._on_param_change)
+        self.changed_tree.parameterChanged.connect(self._on_param_change)
+
+    def _on_param_change(self):
+        """Sets the style combo to 'custom' when a parameter is changed manually."""
+        if self.style_combo.currentText() != 'custom':
+            self.style_combo.blockSignals(True)
+            self.style_combo.setCurrentText('custom')
+            self.style_combo.blockSignals(False)
+
+    def _on_style_changed(self, style_name, silent = False):
+        if not style_name or style_name == 'custom':
+            return
+        #self.style_combo.blockSignals(True)
+        try:
+            logger.info(f"Applying matplotlib style: {style_name}")
+            plt.style.use(style_name)
+            self.refresh_all()
+        except Exception as e:
+            if not silent: QMessageBox.warning(self, "Style Error", f"Could not apply style '{style_name}':\n{e}")
+            logger.error(f"Could not apply style '{style_name}': {e}")
+        # finally:
+            # self.style_combo.setCurrentText('custom')
+            # self.style_combo.blockSignals(False)
+
+    def refresh_all(self, clear = True):
         """Refresh all trees with current rcParams state"""
-        self.original_rcparams = mpl.rcParams.copy()
+        self.current_rcparams = mpl.rcParams.copy()
         
         # Refresh each tree
-        self.all_tree.refresh()
+        self.all_tree.refresh(clear = clear)
         self.all_tree.populate_tree()
         
-        self.important_tree.refresh()
+        self.important_tree.refresh(clear = clear)
         self.important_tree.populate_tree(get_important_parameters())
         
-        self.changed_tree.refresh()
+        self.changed_tree.refresh(clear = clear)
         self.changed_tree.populate_tree(get_changed_parameters())
 
     def apply_changes(self):
@@ -740,26 +782,25 @@ class MplRcParamsWidget(QWidget):
                 
                 if reply == QMessageBox.Ok:  # User clicked "Go back and change value"
                     unchanged_keys.append(key)
-                    invalid_keys.append(key)  # Mark as invalid
         
-        self.original_rcparams = mpl.rcParams.copy()
-        
+        self.current_rcparams = mpl.rcParams.copy()
+
         # Clear changes from all trees (except invalid ones)
         self.all_tree.changed_params = {key: value for key, value in self.all_tree.changed_params.items() if key in unchanged_keys}
         self.important_tree.changed_params = {key: value for key, value in self.important_tree.changed_params.items() if key in unchanged_keys}
         self.changed_tree.changed_params = {key: value for key, value in self.changed_tree.changed_params.items() if key in unchanged_keys}
-        
-        
+
         # Refresh all trees to show current state (but preserve invalid values)
-        self.refresh_all()
-        
+        self.refresh_all(clear = False) # Note: this resets changed_params{} dict, so we reapply
+
+
         # Clear invalid markings after refresh
         self.all_tree.clear_invalid_markings()
         self.important_tree.clear_invalid_markings()
         self.changed_tree.clear_invalid_markings()
         
         # Re-mark invalid parameters after refresh
-        for key in invalid_keys:
+        for key in unchanged_keys:
             invalid_value = all_changes.get(key)
             if invalid_value is not None:
                 self.all_tree.mark_invalid_param(key, invalid_value)
@@ -784,6 +825,59 @@ class MplRcParamsWidget(QWidget):
         if reply == QMessageBox.Yes:
             mpl.rcdefaults()
             self.refresh_all()
+
+    def _import_rcparams(self, file_path = None, silent = False):
+        """Loads rcParams from a JSON file and applies them"""
+        if not file_path:
+            file_path, _ = QFileDialog.getOpenFileName(self, "Import Matplotlib Style", "mpl_style.json", "JSON Style Files (*.json)")
+            if not file_path:
+                return
+        try:
+            with open(file_path, 'r') as f:
+                styles = json.load(f)
+
+                rcparams = default_rcparams.copy()
+                rcparams.update(styles['rcparams'])
+                mpl.rcParams.update(rcparams)
+                if styles['style'] and styles['style'] != 'custom':
+                    self._on_style_changed(styles['style'], silent=True)  # Silently update the style
+                self.refresh_all()
+                logger.info(f"Imported style from '{file_path}")
+                if not silent: self.applyPressed.emit()
+
+                # TODO: MAKE ALL RC_PARAMS THE DEFAULT, CHANGE PARAMETERS, REFELCT IN UI, AND APPLY?
+        except Exception as e:
+            if not silent: QMessageBox.warning(self, "Import Error", f"Failed to import rcParams from '{file_path}':\n{e}")
+            logger.error(f"Failed to import rcParams from '{file_path}': {e}")
+
+    def _export_rcparams(self, file_path = None, silent = False):
+        """Saves current rcParams changes to a JSON file"""
+        if not file_path:
+            file_path, _ = QFileDialog.getSaveFileName(self, "Export Matplotlib Style", "mpl_style.json", "JSON Style Files (*.json)")
+            if not file_path:
+                return
+        try:
+            current_params = {k:v for k,v in mpl.rcParams.items() if default_rcparams[k] != v}
+
+            # Lets determine if there are any unsaved changes
+            all_changes = {}
+            all_changes.update(self.all_tree.get_changed_params())
+            all_changes.update(self.important_tree.get_changed_params())
+            all_changes.update(self.changed_tree.get_changed_params())
+            if len(all_changes) and not silent:
+                # Unsaved changes
+                msg_box = QMessageBox("")
+            with open(file_path, 'w') as f:
+                json.dump({
+                    'style': self.style_combo.currentText(),
+                    'rcparams':current_params
+                }, f, indent=4, cls=NumpyEncoder)
+            if not silent: QMessageBox.information(self, "Export Successful", f"Style saved to:\n'{file_path}'")
+            logger.info(f"Style saved to '{file_path}'")
+        except Exception as e:
+            if not silent: QMessageBox.information(self, "Export Error", f"Failed to export style to '{file_path}':\n{e}")
+            logger.error(f"Failed to export rcParams to '{file_path}': {e}")
+
 
 def create_test_plot():
     """Create a test plot to demonstrate the rcParams changes"""
