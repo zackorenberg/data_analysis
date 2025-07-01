@@ -1,17 +1,24 @@
+"""
+TODO: MAKE THE EXPORTED FILE MORE EASILY READIBLE AS A "THEME" TYPE FILE, I.E SPLIT EACH LEAF INTO ITS OWN SUBDICTIONARY!
+TODO: ADD NAMING/DESCRIPTION IN COMPOSER
+"""
+
 import sys
 import json
 import os
 from PyQt5.QtWidgets import (
-    QDialog, QLayout, QSizePolicy, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QPushButton, QLineEdit, QLabel, QMessageBox, QApplication, QComboBox, QCheckBox, QWidget, QListWidget, QListWidgetItem, QTabWidget, QFileDialog
+    QDialog, QLayout, QSizePolicy, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QPushButton, QLineEdit, QLabel, QMessageBox, QApplication, QComboBox, QCheckBox, QWidget, QListWidget, QListWidgetItem, QTabWidget, QFileDialog, QGroupBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QBrush, QColor
 import matplotlib as mpl
 import cycler # dependancy for mpl
 from matplotlib.rcsetup import validate_bool
+from matplotlib.style.core import STYLE_BLACKLIST
 import matplotlib.pyplot as plt
 import re
 import numpy as np
+from localvars import MPL_USE_STYLE_BACKEND
 
 from logger import get_logger
 logger = get_logger(__name__)
@@ -235,8 +242,7 @@ def get_changed_parameters():
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
-        print(type(obj))
-        if isinstance(obj, cycler.Cycler):
+        if isinstance(obj, cycler.Cycler): # afaik this is the only one being used
             return str(obj)
         if isinstance(obj, np.integer):
             return int(obj)
@@ -263,7 +269,7 @@ class ListEditorWidget(QWidget):
         # List widget
         self.list_widget = QListWidget()
         self.list_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.list_widget.setFixedHeight(100)
+        self.list_widget.setFixedHeight(100) # Can increase/decrease TODO LOCALVARS?
         sizePolicy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(6)
@@ -333,6 +339,119 @@ class ListEditorWidget(QWidget):
     def set_value(self, value):
         self.original_value = value
         self._populate_list()
+
+class MultiStyleDialog(QDialog):
+    """A dialog to select and order multiple Matplotlib styles."""
+    styles_selected = pyqtSignal(str)
+
+    def __init__(self, available_styles, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Compose Matplotlib Styles")
+        self.setMinimumSize(600, 400)
+
+        self.main_layout = QHBoxLayout(self)
+
+        # --- Available Styles ---
+        available_group = QGroupBox("Available Styles")
+        available_layout = QVBoxLayout()
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setPlaceholderText("Filter styles...")
+        self.available_list = QListWidget()
+        self.available_list.addItems(sorted(available_styles))
+        self.available_list.setSelectionMode(QListWidget.ExtendedSelection)
+        available_layout.addWidget(self.filter_edit)
+        available_layout.addWidget(self.available_list)
+        available_group.setLayout(available_layout)
+
+        # --- Control Buttons (Add/Remove) ---
+        controls_layout = QVBoxLayout()
+        controls_layout.addStretch()
+        add_btn = QPushButton("->")
+        add_btn.setToolTip("Add selected style(s)")
+        remove_btn = QPushButton("<-")
+        remove_btn.setToolTip("Remove selected style(s)")
+        controls_layout.addWidget(add_btn)
+        controls_layout.addWidget(remove_btn)
+        controls_layout.addStretch()
+
+        # --- Selected Styles ---
+        selected_group = QGroupBox("Selected Styles (Applied in Order)")
+        selected_layout = QVBoxLayout()
+        self.selected_list = QListWidget()
+        selected_layout.addWidget(self.selected_list)
+
+        # Reorder buttons
+        reorder_layout = QHBoxLayout()
+        up_btn = QPushButton("Up")
+        down_btn = QPushButton("Down")
+        reorder_layout.addStretch()
+        reorder_layout.addWidget(up_btn)
+        reorder_layout.addWidget(down_btn)
+        selected_layout.addLayout(reorder_layout)
+        selected_group.setLayout(selected_layout)
+
+        # --- OK/Cancel ---
+        ok_cancel_layout = QVBoxLayout()
+        ok_cancel_layout.addStretch()
+        ok_btn = QPushButton("OK")
+        cancel_btn = QPushButton("Cancel")
+        ok_cancel_layout.addWidget(ok_btn)
+        ok_cancel_layout.addWidget(cancel_btn)
+
+        # Add all parts to main layout
+        self.main_layout.addWidget(available_group, 2)
+        self.main_layout.addLayout(controls_layout, 0)
+        self.main_layout.addWidget(selected_group, 2)
+        self.main_layout.addLayout(ok_cancel_layout, 0)
+
+        # --- Connect Signals ---
+        self.filter_edit.textChanged.connect(self._filter_available_styles)
+        self.available_list.itemDoubleClicked.connect(self._add_style)
+        add_btn.clicked.connect(self._add_styles)
+        remove_btn.clicked.connect(self._remove_styles)
+        up_btn.clicked.connect(self._move_up)
+        down_btn.clicked.connect(self._move_down)
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+
+    def _filter_available_styles(self, text):
+        for i in range(self.available_list.count()):
+            item = self.available_list.item(i)
+            item.setHidden(text.lower() not in item.text().lower())
+
+    def _add_styles(self):
+        for item in self.available_list.selectedItems():
+            self._add_style(item)
+
+    def _add_style(self, item):
+        # Avoid adding duplicates
+        if not self.selected_list.findItems(item.text(), Qt.MatchExactly):
+            self.selected_list.addItem(item.text())
+
+    def _remove_styles(self):
+        for item in self.selected_list.selectedItems():
+            self.selected_list.takeItem(self.selected_list.row(item))
+
+    def _move_up(self):
+        current_row = self.selected_list.currentRow()
+        if current_row > 0:
+            item = self.selected_list.takeItem(current_row)
+            self.selected_list.insertItem(current_row - 1, item)
+            self.selected_list.setCurrentRow(current_row - 1)
+
+    def _move_down(self):
+        current_row = self.selected_list.currentRow()
+        if 0 <= current_row < self.selected_list.count() - 1:
+            item = self.selected_list.takeItem(current_row)
+            self.selected_list.insertItem(current_row + 1, item)
+            self.selected_list.setCurrentRow(current_row + 1)
+
+    def accept(self):
+        selected_styles = [self.selected_list.item(i).text() for i in range(self.selected_list.count())]
+        if selected_styles:
+            composed_name = ", ".join(selected_styles)
+            self.styles_selected.emit(composed_name)
+        super().accept()
 
 class ParameterTreeWidget(QTreeWidget):
     """Custom tree widget for displaying parameters"""
@@ -643,8 +762,10 @@ class MplRcParamsWidget(QWidget):
         self.style_combo = QComboBox()
         self.style_combo.addItems(['default', 'custom'] + plt.style.available)
         self.style_combo.currentTextChanged.connect(self._on_style_changed)
+        self.style_compose_btn = QPushButton("Compose...")
         style_layout.addWidget(style_label)
         style_layout.addWidget(self.style_combo)
+        style_layout.addWidget(self.style_compose_btn)
         layout.addLayout(style_layout)
         
         # Create tab widget
@@ -700,18 +821,27 @@ class MplRcParamsWidget(QWidget):
         self.apply_btn.clicked.connect(self.apply_changes)
         self.reset_btn.clicked.connect(self.reset_defaults)
         self.cancel_btn.clicked.connect(self.clear_changes)
+        self.style_compose_btn.clicked.connect(self._show_style_compose_dialog)
 
         # Connect changes
         self.all_tree.parameterChanged.connect(self._on_param_change)
         self.important_tree.parameterChanged.connect(self._on_param_change)
         self.changed_tree.parameterChanged.connect(self._on_param_change)
 
+        # Create compose dialog instance just to have ready
+        self.style_compose_dialog = MultiStyleDialog(plt.style.available, self)
+        self.style_compose_dialog.styles_selected.connect(self._on_style_changed)
+
+
+    def _change_style_combo_text(self, new_text):
+        self.style_combo.blockSignals(True)
+        self.style_combo.setCurrentText(new_text)
+        self.style_combo.blockSignals(False)
+
     def _on_param_change(self):
         """Sets the style combo to 'custom' when a parameter is changed manually."""
         if self.style_combo.currentText() != 'custom':
-            self.style_combo.blockSignals(True)
-            self.style_combo.setCurrentText('custom')
-            self.style_combo.blockSignals(False)
+            self._change_style_combo_text('custom')
 
     def _on_style_changed(self, style_name, silent = False):
         if not style_name or style_name == 'custom':
@@ -719,13 +849,19 @@ class MplRcParamsWidget(QWidget):
         #self.style_combo.blockSignals(True)
         try:
             logger.info(f"Applying matplotlib style: {style_name}")
-            plt.style.use(style_name)
+            if ',' in style_name: # It is a composition!
+                if self.style_combo.findText(style_name) == -1: # Add it just incase its a *new* composition
+                    self.style_combo.addItem(style_name)
+                plt.style.use([s.strip() for s in style_name.split(',')]) # Can justhave this
+            else: # can remove this and deindent the line prior
+                plt.style.use(style_name) # This can honestly probably be removed, if no ',' is present, it would supply a list of len==1 which should still be okay!
             self.refresh_all()
         except Exception as e:
             if not silent: QMessageBox.warning(self, "Style Error", f"Could not apply style '{style_name}':\n{e}")
             logger.error(f"Could not apply style '{style_name}': {e}")
-        # finally:
+        finally:
             # self.style_combo.setCurrentText('custom')
+            self._change_style_combo_text(style_name) # Just in case
             # self.style_combo.blockSignals(False)
 
     def refresh_all(self, clear = True):
@@ -825,6 +961,7 @@ class MplRcParamsWidget(QWidget):
         if reply == QMessageBox.Yes:
             mpl.rcdefaults()
             self.refresh_all()
+            self._change_style_combo_text('default')
 
     def _import_rcparams(self, file_path = None, silent = False):
         """Loads rcParams from a JSON file and applies them"""
@@ -836,16 +973,19 @@ class MplRcParamsWidget(QWidget):
             with open(file_path, 'r') as f:
                 styles = json.load(f)
 
-                rcparams = default_rcparams.copy()
-                rcparams.update(styles['rcparams'])
-                mpl.rcParams.update(rcparams)
+                # maybe we want something less harsh
+                if MPL_USE_STYLE_BACKEND:
+                    plt.style.use({k:v for k,v in styles['params'].items() if k not in STYLE_BLACKLIST}) # It can take {k:v} of rcparam pairs, automatically ignores stuff that can crash it
+                else:
+                    rcparams = default_rcparams.copy()
+                    rcparams.update(styles['params'])
+                    mpl.rcParams.update(rcparams)
                 if styles['style'] and styles['style'] != 'custom':
                     self._on_style_changed(styles['style'], silent=True)  # Silently update the style
                 self.refresh_all()
                 logger.info(f"Imported style from '{file_path}")
                 if not silent: self.applyPressed.emit()
 
-                # TODO: MAKE ALL RC_PARAMS THE DEFAULT, CHANGE PARAMETERS, REFELCT IN UI, AND APPLY?
         except Exception as e:
             if not silent: QMessageBox.warning(self, "Import Error", f"Failed to import rcParams from '{file_path}':\n{e}")
             logger.error(f"Failed to import rcParams from '{file_path}': {e}")
@@ -857,26 +997,62 @@ class MplRcParamsWidget(QWidget):
             if not file_path:
                 return
         try:
-            current_params = {k:v for k,v in mpl.rcParams.items() if default_rcparams[k] != v}
+            current_params = {k: v for k, v in mpl.rcParams.items() if default_rcparams[k] != v}
+            # Uncomment this is to debug the Numpy encoder, which doesnt appear to really be putting in work
+            # current_params = mpl.rcParams.copy()
+            if MPL_USE_STYLE_BACKEND: # can make it fancy with dict(filter(etc))
+                current_params = {k:v for k,v in current_params.items() if k not in STYLE_BLACKLIST} # Prevent it from bugging
+
 
             # Lets determine if there are any unsaved changes
             all_changes = {}
             all_changes.update(self.all_tree.get_changed_params())
             all_changes.update(self.important_tree.get_changed_params())
             all_changes.update(self.changed_tree.get_changed_params())
+
             if len(all_changes) and not silent:
                 # Unsaved changes
-                msg_box = QMessageBox("")
+                #msg_box = QMessageBox.question(self, "You have unapplied changes.", "Would you like to apply these changes before exporting?", QMessageBox.Yes | QMessageBox.No)
+                #if msg_box == QMessageBox.Yes:
+                #    # Try applying these changes first
+                #    self.apply_changes()
+                msg_box = QMessageBox(self)
+                msg_box.setIcon(QMessageBox.Question)
+                msg_box.setWindowTitle("Unsaved Changes")
+                msg_box.setText("You have unapplied changes.")
+                msg_box.setInformativeText("Do you want to apply these changes before exporting?")
+
+                apply = msg_box.addButton("Apply and Export", QMessageBox.AcceptRole)
+                ignore = msg_box.addButton("Export Current (Ignore Changes)", QMessageBox.ActionRole)
+                _ = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+
+                msg_box.exec_()
+                clicked_button = msg_box.clickedButton()
+
+                if clicked_button == apply: # Apply changes first
+                    self.apply_changes()
+                elif clicked_button == ignore:
+                    pass
+                else: # Cancelled or error
+                    return
+
             with open(file_path, 'w') as f:
                 json.dump({
                     'style': self.style_combo.currentText(),
-                    'rcparams':current_params
+                    'params':current_params
                 }, f, indent=4, cls=NumpyEncoder)
             if not silent: QMessageBox.information(self, "Export Successful", f"Style saved to:\n'{file_path}'")
             logger.info(f"Style saved to '{file_path}'")
         except Exception as e:
             if not silent: QMessageBox.information(self, "Export Error", f"Failed to export style to '{file_path}':\n{e}")
             logger.error(f"Failed to export rcParams to '{file_path}': {e}")
+
+    ### Style Composer
+
+    def _show_style_compose_dialog(self):
+        self.style_compose_dialog.exec_() # Is it .show() instead??
+
+
 
 
 def create_test_plot():
