@@ -125,6 +125,13 @@ class _SharedPlotOptionsWidget(QWidget):
         styling_group = QGroupBox("Styling")
         style_form_layout = QFormLayout()
 
+        self.axis_combo = QComboBox()
+        self.axis_combo.addItems(['Primary', 'Secondary Y', 'Secondary X', 'Secondary X and Y'])
+        if 'axis' in self.current_params:
+            idx = self.axis_combo.findText(self.current_params['axis'])
+            if idx >= 0: self.axis_combo.setCurrentIndex(idx)
+        style_form_layout.addRow("Axis:", self.axis_combo)
+
         self.legend_edit = QLineEdit(self.current_params.get('legend', ''))
         self.legend_edit.setPlaceholderText("Legend label")
         style_form_layout.addRow("Legend:", self.legend_edit)
