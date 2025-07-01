@@ -7,7 +7,7 @@ import sys
 import json
 import os
 from PyQt5.QtWidgets import (
-    QDialog, QLayout, QSizePolicy, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QPushButton, QLineEdit, QLabel, QMessageBox, QApplication, QComboBox, QCheckBox, QWidget, QListWidget, QListWidgetItem, QTabWidget, QFileDialog, QGroupBox
+    QWidget, QDialog, QLayout, QSizePolicy, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QPushButton, QLineEdit, QLabel, QMessageBox, QApplication, QComboBox, QCheckBox, QListWidget, QListWidgetItem, QTabWidget, QFileDialog, QGroupBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QBrush, QColor
@@ -755,7 +755,7 @@ class MplRcParamsWidget(QWidget):
 
     def _init_ui(self):
         layout = QVBoxLayout()
-        layout.setContentsMargins(0,0,0,0)
+        # this is too much in a dock: layout.setContentsMargins(0,0,0,0)
 
         style_layout = QHBoxLayout()
         style_label = QLabel("Matplotlib Style:")
