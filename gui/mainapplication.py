@@ -241,6 +241,9 @@ class MainWindow(QMainWindow):
         self.post_tree.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.tabs.addTab(self._make_tab_widget(self.post_tree, "Postprocessed Data"), "Postprocessed Data")
 
+        # Define the main application dock area, which we will confine the data browser and plot window to
+        self.DockWidgetAreas_MainApplication = Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea
+
         # Data Browser Dock
         self.data_browser_dock = make_dock_widget(self, "Data Browser", self.tabs, dock_area = self.DockWidgetAreas_MainApplication)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.data_browser_dock)
@@ -251,8 +254,6 @@ class MainWindow(QMainWindow):
         self.toolbar = None # Will be created in next call
         self._add_mpl_canvas()
 
-        # Define the main application dock area, which we will confine the data browser and plot window to
-        self.DockWidgetAreas_MainApplication = Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea
 
         self.plot_dock = make_dock_widget(self, "Plot Area", self.plot_widget, dock_area = self.DockWidgetAreas_MainApplication)
         self.addDockWidget(Qt.RightDockWidgetArea, self.plot_dock)
