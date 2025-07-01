@@ -94,7 +94,7 @@ def discover_plot_modules(modules_dir="plot_modules"):
     return plot_modules
 
 
-class PlotModuleWidget(QDockWidget):
+class PlotModuleWidget(QWidget):
     """
     A dockable widget for selecting and managing plot modules.
     It discovers modules, displays them as a checklist with configuration options,
@@ -103,20 +103,16 @@ class PlotModuleWidget(QDockWidget):
     modulesChanged = pyqtSignal(list)
 
     def __init__(self, parent=None):
-        super().__init__("Plot Modules", parent)
-        self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-
+        super().__init__(parent)
         self.discovered_modules = []
         # Dictionary to store user-defined configurations for each module
         self.module_configs = {}
 
-        self.main_widget = QWidget()
-        self.setWidget(self.main_widget)
         self._init_ui()
         self._load_modules()
 
     def _init_ui(self):
-        layout = QVBoxLayout(self.main_widget)
+        layout = QVBoxLayout()
         desc_label = QLabel("Select modules to apply to the plot.")
         desc_label.setWordWrap(True)
         layout.addWidget(desc_label)
@@ -153,6 +149,8 @@ class PlotModuleWidget(QDockWidget):
         self.refresh_btn.clicked.connect(self.reload_modules)
         self.import_btn.clicked.connect(self.import_module_config)
         self.export_btn.clicked.connect(self.export_module_config)
+
+        self.setLayout(layout)
 
 
     def _clear_layout(self, layout):

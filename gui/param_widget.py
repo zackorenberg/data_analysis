@@ -4,20 +4,19 @@ from logger import get_logger
 
 logger = get_logger(__name__)
 
-class ParamWidget(QDockWidget):
+class ParamWidget(QWidget):
     paramsSelected = pyqtSignal(dict)
     requestUpdateParams = pyqtSignal()
     requestResetPlot = pyqtSignal()
     exportToMatplotlibRequested = pyqtSignal()
 
     def __init__(self, current_params=None, parent=None):
-        super().__init__("Plot Options", parent)
+        super().__init__(parent)
         logger.debug('ParamWidget initialized')
         self.current_params = current_params or {}
         self._init_ui()
 
     def _init_ui(self):
-        main_widget = QWidget()
         layout = QVBoxLayout()
         form = QFormLayout()
         # Title
@@ -98,10 +97,7 @@ class ParamWidget(QDockWidget):
         btns.addWidget(reload_btn)
         layout.addLayout(btns)
         layout.addWidget(export_btn)
-        #export_btn.setMinimumWidth(0)
-        #export_btn.setMaximumWidth(16777215)
-        main_widget.setLayout(layout)
-        self.setWidget(main_widget)
+        self.setLayout(layout)
     
     def export_params(self):
         params = {

@@ -178,7 +178,7 @@ def prepare_plot_data(df, params, logger=None):
         return _prepare_simple_plot_data(df, params, logger)
 
 
-def make_dock_widget(self, widget, dock_area = Qt.AllDockWidgetAreas, title = None):
+def make_dock_widget(self, title, widget, dock_area = Qt.AllDockWidgetAreas):
     dock = QDockWidget(title if title else widget.windowTitle(), self)
     dock.setWidget(widget)
     dock.setAllowedAreas(dock_area)
@@ -242,29 +242,19 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._make_tab_widget(self.post_tree, "Postprocessed Data"), "Postprocessed Data")
 
         # Data Browser Dock
-        self.data_browser_dock = QDockWidget("Data Browser", self)
-        self.data_browser_dock.setWidget(self.tabs)
-        self.data_browser_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.data_browser_dock = make_dock_widget(self, "Data Browser", self.tabs, dock_area = self.DockWidgetAreas_MainApplication)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.data_browser_dock)
 
         # Matplotlib plot area dock
-        #self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
-        #self.toolbar = NavigationToolbar(self.canvas, self)
         self.plot_widget = QWidget()
         self.canvas = None # Will be created in next call
         self.toolbar = None # Will be created in next call
         self._add_mpl_canvas()
-        """
-        plot_layout = QVBoxLayout()
-        plot_layout.setContentsMargins(0, 0, 0, 0)
-        plot_layout.setSpacing(0)
-        plot_layout.addWidget(self.toolbar)
-        plot_layout.addWidget(self.canvas)
-        self.plot_widget.setLayout(plot_layout)
-        """
-        self.plot_dock = QDockWidget("Plot Area", self)
-        self.plot_dock.setWidget(self.plot_widget)
-        self.plot_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+
+        # Define the main application dock area, which we will confine the data browser and plot window to
+        self.DockWidgetAreas_MainApplication = Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea
+
+        self.plot_dock = make_dock_widget(self, "Plot Area", self.plot_widget, dock_area = self.DockWidgetAreas_MainApplication)
         self.addDockWidget(Qt.RightDockWidgetArea, self.plot_dock)
 
         # Plotted lines list dock
@@ -273,41 +263,40 @@ class MainWindow(QMainWindow):
         self.line_list_widget.showHideToggled.connect(self.toggle_line_visibility)
         self.line_list_widget.removeRequested.connect(self.remove_plot_line)
         self.line_list_widget.editRequested.connect(self.edit_line_params)
-        #self.line_list_widget.list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
-        self.lines_dock = QDockWidget("Plotted Lines", self)
-        self.lines_dock.setWidget(self.line_list_widget)
+        self.lines_dock = make_dock_widget(self, "Plotted Lines", self.line_list_widget)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.lines_dock)
 
         # Parameter controls widget (already dockable)
         self.param_widget = ParamWidget(current_params=None)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.param_widget)
         self.param_widget.paramsSelected.connect(self.apply_global_plot_params)
         self.param_widget.requestUpdateParams.connect(self.update_param_widget_fields_from_plot)
         self.param_widget.requestResetPlot.connect(self.reset_plot_and_params)
         self.param_widget.exportToMatplotlibRequested.connect(self.export_to_matplotlib)
+        self.param_dock = make_dock_widget(self, "Plot Options", self.param_widget) #, dock_area = self.DockWidgetAreas_MainApplication)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.param_dock)
+
         # Tabify Plot Area and Plot Options by default
-        self.tabifyDockWidget(self.plot_dock, self.param_widget)
-        #self.plot_dock.raise_()
+        self.tabifyDockWidget(self.plot_dock, self.param_dock)
 
         # Plot modules widget
         self.plot_module_widget = PlotModuleWidget(parent=self)
-
-        self.addDockWidget(Qt.RightDockWidgetArea, self.plot_module_widget)
+        self.plot_module_dock = make_dock_widget(self,"Plot Modules", self.plot_module_widget) #, dock_area = self.DockWidgetAreas_MainApplication)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.plot_module_dock)
         self.plot_module_widget.modulesChanged.connect(self.on_plot_modules_changed)
 
         # Tabify with parameter widget
-        self.tabifyDockWidget(self.param_widget, self.plot_module_widget)
+        self.tabifyDockWidget(self.param_dock, self.plot_module_dock)
 
         # rcParams widget
         self.rcparams_widget = MplRcParamsWidget(parent=self)
-        self.rcparams_dock = make_dock_widget(self, self.rcparams_widget, title="Plot RCParams", dock_area = Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.rcparams_dock = make_dock_widget(self, "Plot RCParams", self.rcparams_widget) #, dock_area = Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self.addDockWidget(Qt.RightDockWidgetArea, self.rcparams_dock)
         self.rcparams_widget.applyPressed.connect(self.on_rcParam_changed)
 
         # Tabify with plot modules widget
-        self.tabifyDockWidget(self.plot_module_widget, self.rcparams_dock)
+        self.tabifyDockWidget(self.plot_module_dock, self.rcparams_dock)
 
-        # Raise plot area
+        # Raise plot area tab after adding all the rest of them
         self.plot_dock.raise_()
 
         # Store plot info
