@@ -16,6 +16,7 @@ from gui.line_list_widget import LineListWidget
 from logger import get_logger
 import logging
 from localvars import RAW_DATA_DIR, PREPROCESSED_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR, DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE, REREAD_DATAFILE_ON_EDIT, PROCESSING_MODULES_DIR
+from gui.mpl_rcparams_widget import MplRcParamsWidget
 from gui.processing_dialog import ProcessingDialog
 from gui.plot_module_widget import PlotModuleWidget
 
@@ -176,6 +177,14 @@ def prepare_plot_data(df, params, logger=None):
     else:
         return _prepare_simple_plot_data(df, params, logger)
 
+
+def make_dock_widget(self, widget, dock_area = Qt.AllDockWidgetAreas, title = None):
+    dock = QDockWidget(title if title else widget.windowTitle(), self)
+    dock.setWidget(widget)
+    dock.setAllowedAreas(dock_area)
+    return dock
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -278,15 +287,27 @@ class MainWindow(QMainWindow):
         self.param_widget.exportToMatplotlibRequested.connect(self.export_to_matplotlib)
         # Tabify Plot Area and Plot Options by default
         self.tabifyDockWidget(self.plot_dock, self.param_widget)
-        self.plot_dock.raise_()
+        #self.plot_dock.raise_()
 
         # Plot modules widget
         self.plot_module_widget = PlotModuleWidget(parent=self)
+
         self.addDockWidget(Qt.RightDockWidgetArea, self.plot_module_widget)
         self.plot_module_widget.modulesChanged.connect(self.on_plot_modules_changed)
 
         # Tabify with parameter widget
         self.tabifyDockWidget(self.param_widget, self.plot_module_widget)
+
+        # rcParams widget
+        self.rcparams_widget = MplRcParamsWidget(parent=self)
+        self.rcparams_dock = make_dock_widget(self, self.rcparams_widget, title="Plot RCParams", dock_area = Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.rcparams_dock)
+        self.rcparams_widget.applyPressed.connect(self.on_rcParam_changed)
+
+        # Tabify with plot modules widget
+        self.tabifyDockWidget(self.plot_module_widget, self.rcparams_dock)
+
+        # Raise plot area
         self.plot_dock.raise_()
 
         # Store plot info
@@ -917,6 +938,18 @@ class MainWindow(QMainWindow):
         self.redraw_plot()
         self.canvas.update_visuals(self.global_params, self.plot_modules)
         self.plot_dock.raise_()
+
+    def on_rcParam_changed(self):
+        # We are reloading plot modules, so disable and initialize them
+        for module in self.plot_modules:
+            module.disable(self.canvas.axes)
+        for module in self.plot_modules:
+            module.initialize()
+        self._add_mpl_canvas()
+        self.redraw_plot()
+        self.canvas.update_visuals(self.global_params, self.plot_modules)
+        self.plot_dock.raise_()
+
 
 def main():
     app = QApplication(sys.argv)
