@@ -2,13 +2,14 @@ import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QDialog
 from gui.mpl_canvas import MplCanvas
 from gui.plot_dialog import PlotParamDialog, CalcPlotParamDialog
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QFileSystemModel, QTabWidget, QAction, QFileDialog, QMenuBar, QListWidget, QListWidgetItem, QMessageBox, QDockWidget, QLabel, QSizePolicy, QPushButton, QInputDialog, QMenu)
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QFileSystemModel, QTabWidget, QAction, QFileDialog, QMenuBar, QListWidget, QListWidgetItem, QMessageBox, QDockWidget, QLabel, QSizePolicy, QPushButton, QInputDialog, QMenu, QActionGroup, QToolBar)
 from PyQt5.QtCore import Qt
 import os
 from DataManagement.data_reader import read_data_file
 import pandas as pd
 from gui.param_widget import ParamWidget
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import json
@@ -193,7 +194,7 @@ class MainWindow(QMainWindow):
         logger.debug('MainWindow initialized with verbosity %s', self.verbosity)
         self.setWindowTitle("Corbino Analysis GUI")
         self.setGeometry(100, 100, 1200, 800)
-        
+
         self.statusBar = self.statusBar()
 
         self._create_menubar()
@@ -313,6 +314,19 @@ class MainWindow(QMainWindow):
 
         self._setup_file_tree_context_menu()
 
+        ### Add interactions
+        self.annotations = []
+        self._create_interaction_toolbar()
+
+        self.interaction_mode = 'pan'
+        self.dragged_artist = None
+        self.new_line_start = None
+
+        self.canvas.mpl_connect('button_press_event', self._on_canvas_button_press)
+        self.canvas.mpl_connect('button_release_event', self._on_canvas_button_release)
+        self.canvas.mpl_connect('motion_notify_event', self._on_canvas_motion)
+        self.canvas.mpl_connect('pick_event', self._on_pick)
+
     def _add_mpl_canvas(self):
         """
         Adds/Resets the MplCanvas widget fully by deleting the old canvas and toolbar
@@ -387,6 +401,35 @@ class MainWindow(QMainWindow):
         append_cfg_action = QAction("Append Plot Configuration", self)
         append_cfg_action.triggered.connect(self.append_plot_config)
         file_menu.addAction(append_cfg_action)
+
+    def _create_interaction_toolbar(self):
+        """Toolbar for plot stuff"""
+        self.interaction_toolbar = self.toolbar
+        self.addToolBar(Qt.TopToolBarArea, self.toolbar)
+
+        #self.interaction_toolbar = QToolBar("Interaction Tools")
+        #self.addToolBar(Qt.TopToolBarArea, self.interaction_toolbar)
+
+        action_group = QActionGroup(self)
+        action_group.setExclusive(True)
+
+        pan_action = QAction("Pan", self, checkable=True)
+        pan_action.setData('pan')
+        action_group.addAction(pan_action)
+        self.interaction_toolbar.addAction(pan_action)
+
+        text_action = QAction("Add Text", self, checkable=True)
+        text_action.setData('text')
+        action_group.addAction(text_action)
+        self.interaction_toolbar.addAction(text_action)
+
+        # Formally select and move
+        select_action = QAction("Move Object", self, checkable=True)
+        select_action.setData('select')
+        action_group.addAction(select_action)
+        self.interaction_toolbar.addAction(select_action)
+
+        action_group.triggered.connect(self._on_interaction_mode_changed)
 
     def save_plot(self):
         options = QFileDialog.Options()
@@ -470,7 +513,7 @@ class MainWindow(QMainWindow):
             plot_kwargs['linestyle'] = params['linestyle']
         if 'marker' in params:
             plot_kwargs['marker'] = params['marker']
-        
+
         line, = self.canvas.axes.plot(x, y, label=label, **plot_kwargs)
         self.canvas.set_line_style_and_color(line, params)
 
@@ -532,7 +575,7 @@ class MainWindow(QMainWindow):
         self.plotted_lines[idx]['line'] = line
         self.plotted_lines[idx]['df'] = df # Only if rereading is enabled, otherwise makes no difference
         # Update label in custom widget
-        
+
         self.canvas.set_line_style_and_color(line, params)
         # TODO: make this better?
         self.line_list_widget.list_widget.itemWidget(self.line_list_widget.list_widget.item(idx)).layout().itemAt(1).widget().setText(line.get_label())
@@ -544,7 +587,7 @@ class MainWindow(QMainWindow):
         #self.canvas.draw()
         logger.info(f"Plot line updated at idx={idx}")
         self.clear_status_message()
-        
+
 
     def refresh_plot(self):
         # This method is now handled by apply_plot_params
@@ -587,6 +630,12 @@ class MainWindow(QMainWindow):
             line, = self.canvas.axes.plot(x, y, label=label)
             line_info['line'] = line
             self.canvas.set_line_style_and_color(line, params)
+
+        # Redraw annotations
+        for artist in self.annotations:
+            self.canvas.axes.add_artist(artist)
+            artist.set_picker(5) # To pick according to google
+
         logger.info("Plot redrawn.")
 
     def reset_plot_and_params(self):
@@ -595,6 +644,7 @@ class MainWindow(QMainWindow):
         self.redraw_plot()
         # TODO: reset all plot modules
         # self.plot_modules.reset.emit() or something along those lines
+        self.annotations.clear()
         self.canvas.update_visuals({'legend': True}, self.plot_modules)
         #self.canvas.apply_plot_params({'legend': True})
         #self.canvas.figure.tight_layout()
@@ -691,6 +741,7 @@ class MainWindow(QMainWindow):
                     'comments': line.get('comments', [])
                 } for line in self.plotted_lines
             ],
+            'annotations': [self._serialize_artist(artist) for artist in self.annotations],
             'global_params': self.global_params
         }
         try:
@@ -733,6 +784,11 @@ class MainWindow(QMainWindow):
             # Restore lines
             for line_info in config.get('plotted_lines', []):
                 self.__add_plot_line_from_config(line_info)
+            # Restore annotations
+            for spec in config.get('annotations', []):
+                artist = self._create_artist_from_spec(spec)
+                if artist:
+                    self.annotations.append(artist)
             # Restore global params
             global_params = config.get('global_params', {})
             self.global_params = global_params
@@ -776,7 +832,7 @@ class MainWindow(QMainWindow):
     def set_status_message(self, msg, timeout=0):
         self.statusBar.showMessage(msg, timeout)
         QApplication.processEvents()
-    
+
     def clear_status_message(self):
         self.statusBar.clearMessage()
 
@@ -940,6 +996,111 @@ class MainWindow(QMainWindow):
         self.canvas.update_visuals(self.global_params, self.plot_modules)
         self.plot_dock.raise_()
 
+    ##### Annotations and stuff
+
+    def _serialize_artist(self, artist):
+        if isinstance(artist, mpl.Text):
+            return {
+                'type': 'text',
+                'text': artist.get_text(),
+                'x': artist.get_x(),
+                'y': artist.get_y(),
+                'color': artist.get_color(),
+                'fontsize': artist.get_fontsize(),
+                'ha': artist.get_ha(),
+                'va': artist.get_va(),
+                'rotation': artist.get_rotation()
+            }
+        #### Do this for other artist types
+
+        return None
+
+    def _create_artist_from_spec(self, spec):
+        """ Creates mpl artist from dictionary spec """
+        if not spec: return None
+
+        try:
+            artist_type = spec.get('type')
+            if artist_type == 'text':
+                artist = self.canvas.axes.text(
+                    x = spec['x'],
+                    y = spec['y'],
+                    s = spec['text'],
+                    color = spec.get('color', 'black'),
+                    fontsize = spec.get('fontsize', 10),
+                    ha = spec.get('ha', 'center'),
+                    va = spec.get('va', 'center'),
+                    rotation = spec.get('rotation', 0),
+                )
+                artist.set_picker(5) # selectable
+                return artist
+
+        except Exception as e:
+            logger.error(f"Error creating artist from spec: {e}")
+            return
+        finally:
+            return None # There was no artists here
+
+    def _add_annotation(self, artist):
+        if artist:
+            self.annotations.append(artist)
+            self.canvas.axes.add_artist(artist)
+            artist.set_picker(5)
+            self.canvas.draw_idle() # Add annotation when can
+
+    #### Interaction Methods ####
+    def _on_interaction_mode_changed(self, action):
+        self.interaction_mode = action.data()
+        logger.info(f" Interaction mode changed to {self.interaction_mode}")
+        if self.interaction_mode == 'pan':
+            self.toolbar.pan()
+        else:
+            if 'pan' in self.toolbar.mode: self.toolbar.pan()
+            if 'zoom' in self.toolbar.mode: self.toolbar.zoom()
+            self.toolbar.mode = ''
+
+    def _on_canvas_button_press(self, event):
+        if event.inaxes != self.canvas.axes: # NOTE: May fuck with twinx()
+            print("Uh Oh")
+            return
+
+        if self.interaction_mode == 'text':
+            self._handle_add_text(event)
+
+        #if self.interaction_mode == 'select' and self.dragged_artist:
+        #    self.dragged_artist = None
+        #    self.canvas.draw_idle()
+
+
+    def _on_canvas_motion(self, event):
+        if event.inaxes != self.canvas.axes: # NOTE: May fuck with twinx()
+            return
+
+        if self.interaction_mode == 'select' and self.dragged_artist:
+            self.dragged_artist.set_position((event.xdata, event.ydata))
+            self.canvas.draw_idle()
+
+    def _on_canvas_button_release(self, event):
+        print("Test")
+        if self.dragged_artist:
+            self.dragged_artist = None
+            self.canvas.draw_idle()
+
+    def _on_pick(self, event):
+        if self.interaction_mode == 'select':
+            self.dragged_artist = event.artist
+
+    def _handle_add_text(self, event):
+        text, ok = QInputDialog.getText(self, "Add Text", "Enter text:") # TODO: MAKE DIALOG LIKE PLOT
+        if ok and text:
+            artist = self.canvas.axes.text(
+                x = event.xdata,
+                y = event.ydata,
+                s = text,
+                ha = 'center',
+                va = 'center',
+            )
+            self._add_annotation(artist)
 
 def main():
     app = QApplication(sys.argv)
