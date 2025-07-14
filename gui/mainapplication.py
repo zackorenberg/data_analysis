@@ -8,7 +8,8 @@ import os
 from DataManagement.data_reader import read_data_file
 import pandas as pd
 from gui.param_widget import ParamWidget
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+#from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from gui.mpl_navigation_toolbar import NavigationToolbar
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1081,7 +1082,6 @@ class MainWindow(QMainWindow):
             self.canvas.draw_idle()
 
     def _on_canvas_button_release(self, event):
-        print("Test")
         if self.dragged_artist:
             self.dragged_artist = None
             self.canvas.draw_idle()
