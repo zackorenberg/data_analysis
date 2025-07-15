@@ -1102,6 +1102,11 @@ class MainWindow(QMainWindow):
             )
             self._add_annotation(artist)
 
+    def add_text(self, event): # Temporary hacky way until everything can be moved to FigureCanvas class!
+        self._handle_add_text(event)
+
+
+
 def main():
     app = QApplication(sys.argv)
     window = MainWindow()
