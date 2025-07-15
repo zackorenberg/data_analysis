@@ -211,7 +211,7 @@ class MainWindow(QMainWindow):
         self.raw_tree.setModel(self.raw_model)
         self.raw_tree.setRootIndex(self.raw_model.index(RAW_DATA_DIR))
         self.raw_tree.setColumnWidth(0, 250)
-        self.raw_tree.setHeaderHidden(True)
+        self.raw_tree.setHeaderHidden(False)
         self.raw_tree.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.tabs.addTab(self._make_tab_widget(self.raw_tree, "Raw Data"), "Raw Data")
 
@@ -224,7 +224,7 @@ class MainWindow(QMainWindow):
         self.pre_tree.setModel(self.pre_model)
         self.pre_tree.setRootIndex(self.pre_model.index(PREPROCESSED_DATA_DIR))
         self.pre_tree.setColumnWidth(0, 250)
-        self.pre_tree.setHeaderHidden(True)
+        self.pre_tree.setHeaderHidden(False)
         self.pre_tree.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.tabs.insertTab(1, self._make_tab_widget(self.pre_tree, "Preprocessed Data"), "Preprocessed Data")
 
@@ -237,7 +237,7 @@ class MainWindow(QMainWindow):
         self.post_tree.setModel(self.post_model)
         self.post_tree.setRootIndex(self.post_model.index(POSTPROCESSED_DATA_DIR))
         self.post_tree.setColumnWidth(0, 250)
-        self.post_tree.setHeaderHidden(True)
+        self.post_tree.setHeaderHidden(False)
         self.post_tree.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.tabs.addTab(self._make_tab_widget(self.post_tree, "Postprocessed Data"), "Postprocessed Data")
 

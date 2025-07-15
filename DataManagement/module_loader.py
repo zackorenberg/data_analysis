@@ -33,7 +33,7 @@ def discover_modules(folder: str, mode: str) -> List[Tuple[str, type, list]]:
                 allowed = [mod_mode]
             else:
                 allowed = list(mod_mode)
-            if mode not in allowed:
+            if mode not in allowed and mode != 'all':
                 continue
             for attr in dir(mod):
                 obj = getattr(mod, attr)
