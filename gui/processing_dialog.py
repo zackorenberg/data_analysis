@@ -413,12 +413,12 @@ class ProcessingDialog(QDialog):
         elif isinstance(w, QCheckBox):
             w.setChecked(value)
         elif isinstance(w, QLineEdit):
-            w.setText(value)
+            w.setText(str(value))
         elif isinstance(w, QLabel):
-            w.setText(value)
+            w.setText(str(value))
         else:
             logger.warning(f"Widget hit fallback {w} has text: {w.text()}")
-            w.setText(value)
+            w.setText(str(value))
 
     def _collect_param_form(self, param_widgets, multi_param_widgets, multi_param_groups):
         params = {}

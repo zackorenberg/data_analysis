@@ -6,6 +6,8 @@ data/postprocessed/*
 data/plots/*
 data/*
 
+processing_modules/*.py
+
 # Data and settings specifics
 *.dat
 *.json
