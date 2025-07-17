@@ -137,7 +137,7 @@ class _SharedPlotOptionsWidget(QWidget):
         style_form_layout.addRow("Line style:", self.linestyle_combo)
 
         self.marker_combo = QComboBox()
-        self.marker_combo.addItems(['', 'o', 's', '^', 'v', '<', '>', 'd', 'p', '*', '+', 'x'])
+        self.marker_combo.addItems([' ', 'o', 's', '^', 'v', '<', '>', 'd', 'p', '*', '+', 'x'])
         if 'marker' in self.current_params:
             idx = self.marker_combo.findText(self.current_params['marker'])
             if idx >= 0: self.marker_combo.setCurrentIndex(idx)
@@ -174,7 +174,7 @@ class _SharedPlotOptionsWidget(QWidget):
         if mask_exprs: params['mask_exprs'] = mask_exprs
 
         if self.legend_edit.text().strip(): params['legend'] = self.legend_edit.text().strip()
-        if self.linestyle_combo.currentText() != 'None': params['linestyle'] = self.linestyle_combo.currentText()
+        if self.linestyle_combo.currentText(): params['linestyle'] = self.linestyle_combo.currentText() if self.linestyle_combo.currentText() != 'None' else ' ' # Empty linestyle
         if self.marker_combo.currentText(): params['marker'] = self.marker_combo.currentText()
         if self.color_btn.get_color(): params['color'] = self.color_btn.get_color().name()
 
