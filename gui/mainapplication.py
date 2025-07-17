@@ -388,6 +388,17 @@ class MainWindow(QMainWindow):
         append_cfg_action.triggered.connect(self.append_plot_config)
         file_menu.addAction(append_cfg_action)
 
+        # Add option to fully reload file
+        reload_data_action = QAction("Reread Plotted Datafiles", self)
+        def redraw():
+            self.redraw_plot(reread_data=True)
+            self.canvas.update_visuals(self.global_params, self.plot_modules)
+        reload_data_action.triggered.connect(redraw)
+        file_menu.addAction(reload_data_action)
+
+
+
+
     def save_plot(self):
         options = QFileDialog.Options()
         # Ensure plots directory exists
@@ -564,18 +575,19 @@ class MainWindow(QMainWindow):
         params = self.canvas.get_plot_params()
         self.param_widget.update_fields_from_params(params)
 
-    def redraw_plot(self):
+    def redraw_plot(self, reread_data = False):
         logger.debug("Redrawing plot with current plotted_lines.")
         self.canvas.axes.clear()
         for line_info in self.plotted_lines:
             df = line_info['df']
-            """
-            try:
-                df, _, _, _ = read_data_file(line_info['file'])
-            except Exception as e:
-                logger.error(f"Error reading file {line_info['file']}: {e}")
-                continue
-            """
+            if reread_data:
+                logger.debug(f"Rereading datafile {line_info['file']}")
+                try:
+                    df, _, _, _ = read_data_file(line_info['file'])
+                    line_info['df'] = df
+                except Exception as e:
+                    logger.error(f"Error reading file {line_info['file']}: {e}")
+                    continue
             params = line_info['params']
             try:
                 x, y = prepare_plot_data(df, params, logger)
@@ -822,6 +834,38 @@ class MainWindow(QMainWindow):
         self.pre_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.pre_tree.customContextMenuRequested.connect(lambda pos: self._show_file_context_menu(self.pre_tree, pos, 'pre'))
 
+    def _refresh_file_tree(self, tree_type = None):
+        """ Forces a refresh of the tree models """
+        if not tree_type:
+            logger.info("Refreshing all file tree views.")
+            self._refresh_file_tree('raw')
+            self._refresh_file_tree('pre')
+            self._refresh_file_tree('post')
+        else:
+            logger.info(f"Refreshing {tree_type} file tree view.")
+            self.set_status_message(f"Refreshing {tree_type} files...")
+            if tree_type == 'raw':
+                model = self.raw_model
+                tree = self.raw_tree
+            elif tree_type == 'pre':
+                model = self.pre_model
+                tree = self.pre_tree
+            elif tree_type == 'post':
+                model = self.post_model
+                tree = self.post_tree
+            else:
+                logger.error(f"Invalid tree type: {tree_type}")
+                self.clear_status_message()
+                return
+
+            root_path = model.rootPath()
+            model.setRootPath('') # Clear it
+            model.setRootPath(root_path)
+            tree.setRootIndex(model.index(root_path))
+
+            self.clear_status_message()
+
+
     def _show_file_context_menu(self, tree, pos, tree_type):
         index = tree.indexAt(pos)
         if not index.isValid():
@@ -840,6 +884,8 @@ class MainWindow(QMainWindow):
         if os.path.isdir(file_path):
             return
         menu = QMenu()
+
+
         # Math action
         plot_math_action = QAction('Plot with expression...', self)
         plot_math_action.triggered.connect(lambda: self.handle_file_plot_math(file_path = file_path))
@@ -852,6 +898,15 @@ class MainWindow(QMainWindow):
         postprocess_action.triggered.connect(lambda: self._run_processing_dialog(file_path, 'post'))
         menu.addAction(preprocess_action)
         menu.addAction(postprocess_action)
+
+
+        # Refresh tree view
+        menu.addSeparator()
+        refresh_tree = QAction('Reload files from disk')
+        refresh_tree.triggered.connect(lambda: self._refresh_file_tree(tree_type))
+        menu.addAction(refresh_tree)
+
+        # Add menu to tree
         menu.exec_(tree.viewport().mapToGlobal(pos))
 
     def _run_processing_dialog(self, file_path, mode):
