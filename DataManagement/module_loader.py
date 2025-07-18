@@ -2,6 +2,7 @@ import importlib.util
 import os
 import sys
 from typing import List, Tuple, Type
+from processing_base import BaseProcessingModule
 
 def discover_modules(folder: str, mode: str) -> List[Tuple[str, type, list]]:
     """
@@ -9,7 +10,6 @@ def discover_modules(folder: str, mode: str) -> List[Tuple[str, type, list]]:
     Only include modules whose MODE matches the given mode ('pre' or 'post').
     Returns a list of (module_name, class, PARAMETERS).
     """
-    from processing_base import BaseProcessingModule
     modules = []
     for fname in os.listdir(folder):
         if fname.endswith('.py') and not fname.startswith('__'):
@@ -38,6 +38,9 @@ def discover_modules(folder: str, mode: str) -> List[Tuple[str, type, list]]:
             for attr in dir(mod):
                 obj = getattr(mod, attr)
                 if isinstance(obj, type) and issubclass(obj, BaseProcessingModule) and obj is not BaseProcessingModule:
-                    parameters = getattr(mod, 'PARAMETERS', getattr(obj, 'PARAMETERS', []))
-                    modules.append((mod_name, obj, parameters))
+                    # Maybe we should have the default come from the object instead of the module
+                    parameters = getattr(obj, 'PARAMETERS', getattr(mod, 'PARAMETERS', []))
+                    # parameters = getattr(mod, 'PARAMETERS', getattr(obj, 'PARAMETERS', [])) inconsistent with future plotmodules
+                    name = getattr(obj, 'name', mod_name) # Can customize name, maybe add description?
+                    modules.append((name, obj, parameters))
     return modules 
