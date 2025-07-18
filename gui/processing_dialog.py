@@ -212,6 +212,9 @@ class ProcessingDialog(QDialog):
                     raise ValueError(f"Required parameter '{label}' is missing.")
         # Validate module params
         if self.parameter_form_widget:
+            # Call internal validation
+            self.parameter_form_widget.validate()
+            """
             param_defs = self.parameter_form_widget.param_defs
             for p_def in param_defs:
                 d = self.parameter_form_widget._param_def_to_dict(p_def) if not isinstance(p_def, dict) else p_def
@@ -221,6 +224,7 @@ class ProcessingDialog(QDialog):
                     val = params.get(name)
                     if val is None or val == "" or val == []:
                         raise ValueError(f"Required parameter '{label}' is missing.")
+            """
 
     def import_params(self, file_path = None):
         if not file_path: # If not supplied, we simply ask

@@ -12,6 +12,10 @@ LabelRole = 0  # QFormLayout.LabelRole
 
 MULTI_VALUE_GOES_IN_GROUPBOX = True
 
+PROPERTY_MULTI_VALUE = 'is_multi_value_container'
+PROPERTY_MULTI_GROUP = 'is_multi_group_container'
+PROPERTY_GROUP = 'is_group_container'
+
 class ParameterFormWidget(QWidget):
     """
     A reusable widget that dynamically generates a form from a parameter definition list.
@@ -39,6 +43,15 @@ class ParameterFormWidget(QWidget):
         name, label, typ, required, placeholder = p_normalized
         return dict(name=name, label=label, typ=typ, required=required, placeholder=placeholder)
 
+    def _validate_type_dict(self, type_dict, is_multi = False):
+        """
+        This should have all the necessary stuff to validate a dictionary type
+
+        Currently, it is just in _build_form_from_defs
+        """
+        pass
+
+
     def _build_form_from_defs(self, param_defs, parent_layout):
         """Recursively builds the UI from a list of parameter definitions."""
         for param_tuple in param_defs:
@@ -54,11 +67,18 @@ class ParameterFormWidget(QWidget):
                 is_multi = bool(m)
                 base_name = m.group(1) if is_multi else name
 
+                if not is_multi and typ.get('type') == 'multi':
+                    logger.warning("Deprication warning: Use of 'type: multi' without internal name suffix '_%d' is deprecated.")
+                    is_multi = True
+                elif is_multi and typ.get('type') == 'group':
+                    logger.warning("Deprication warning: Use of 'type: group' with internal name suffix '_%d' is deprecated, please use 'type: multi' instead.")
+                    is_multi = False
+
                 if is_multi:
                     # Create a main container QGroupBox for the repeatable groups.
                     # This groupbox will span the full width of the form.
                     container_group = QGroupBox(rlabel)
-                    container_group.setProperty('is_multi_group_container', True)
+                    container_group.setProperty(PROPERTY_MULTI_GROUP, True)
                     container_group.setProperty('param_name', base_name)
 
                     # The layout inside this container will hold the individual group instances.
@@ -72,7 +92,7 @@ class ParameterFormWidget(QWidget):
                     self._add_group_instance(container_layout, base_name, label, typ['fields'], required, is_multi)
                 else:  # Single, static group
                     groupbox = QGroupBox(rlabel)
-                    groupbox.setProperty('is_static_group', True)
+                    groupbox.setProperty(PROPERTY_GROUP, True)
                     groupbox.setProperty('param_name', base_name)
                     form_layout = QFormLayout()
                     groupbox.setLayout(form_layout)
@@ -88,11 +108,10 @@ class ParameterFormWidget(QWidget):
                 continue
 
             # --- Simple Parameter ---
-            w = self._make_widget_for_type(typ, placeholder, required)
-            w.setProperty('param_name', name)
+            w = self._make_widget_for_type(*param_tuple)
             parent_layout.addRow(rlabel, w)
 
-    def _create_multi_value_ui(self, parent_layout, base_name, rlabel, typ, required, placeholder):
+    def _create_multi_value_ui(self, parent_layout, base_name, rlabel, typ, required, placeholder, values = None):
         """Creates a UI for repeatable single-value parameters with add/remove buttons on each row."""
 
         container_widget = QGroupBox(rlabel) if MULTI_VALUE_GOES_IN_GROUPBOX else QWidget()
@@ -100,8 +119,13 @@ class ParameterFormWidget(QWidget):
         container_layout = QVBoxLayout(container_widget)
         if not MULTI_VALUE_GOES_IN_GROUPBOX:
             container_layout.setContentsMargins(0, 0, 0, 0)
-        container_widget.setProperty('is_multi_value_container', True)
+        container_widget.setProperty(PROPERTY_MULTI_VALUE, True)
         container_widget.setProperty('param_name', base_name)
+        container_widget.setProperty('label', rlabel)
+        container_widget.setProperty('typ', typ)
+        container_widget.setProperty('required', required)
+        container_widget.setProperty('placeholder', placeholder)
+
 
         def add_row(insert_pos=-1):
             """Internal function to create and add a single parameter row."""
@@ -110,8 +134,8 @@ class ParameterFormWidget(QWidget):
             row_layout.setContentsMargins(0, 0, 0, 0)
 
             # Create the main input widget for the row
-            input_widget = self._make_widget_for_type(typ, placeholder, required)
-            input_widget.setProperty('param_name', f"{base_name}_item")  # Mark as item
+            input_widget = self._make_widget_for_type(f"{base_name}_item", rlabel, typ, required, placeholder)
+            # input_widget.setProperty('param_name', f"{base_name}_item")  # Mark as item
 
             # Create buttons
             add_btn = QPushButton('+')
@@ -137,11 +161,13 @@ class ParameterFormWidget(QWidget):
             add_btn.clicked.connect(lambda: add_row_after(row_widget))
             remove_btn.clicked.connect(lambda: remove_row(row_widget))
 
+            return input_widget  # This is for if we want to set the value later
+
         def add_row_after(current_row_widget):
             """Finds the index of the current row and adds a new one after it."""
             index = container_layout.indexOf(current_row_widget)
             if index != -1:
-                add_row(insert_pos=index + 1)
+                return add_row(insert_pos=index + 1)
 
         def remove_row(row_to_remove):
             """Removes a specific row from the layout."""
@@ -163,7 +189,16 @@ class ParameterFormWidget(QWidget):
             parent_layout.addRow(container_widget)
         else:
             parent_layout.addRow(rlabel, container_widget)
-        add_row()
+
+        container_widget.setProperty('add_row', add_row)
+        container_widget.setProperty('add_row_after', add_row_after)
+        container_widget.setProperty('remove_row', remove_row)
+        if values:
+            for value in values:
+                w = add_row()
+                self._set_widget_value(w, value)
+        else:
+            add_row()
 
     def _add_group_instance(self, parent_layout, base_name, label, fields, required, is_multi, insert_pos=None):
         """Adds a single instance of a parameter group."""
@@ -192,14 +227,14 @@ class ParameterFormWidget(QWidget):
 
             # Connect signals, capturing the specific groupbox instance to act upon
             add_above_btn.clicked.connect(
-                lambda _, b=base_name, gb=groupbox: self._handle_multi_group_action('add_above', b, gb, label, fields,
-                                                                                    required))
+                lambda _, b=base_name, gb=groupbox: self._handle_multi_group_action('add_above', b, gb, label, fields, required)
+            )
             remove_btn.clicked.connect(
-                lambda _, b=base_name, gb=groupbox: self._handle_multi_group_action('remove', b, gb, label, fields,
-                                                                                    required))
+                lambda _, b=base_name, gb=groupbox: self._handle_multi_group_action('remove', b, gb, label, fields, required)
+            )
             add_below_btn.clicked.connect(
-                lambda _, b=base_name, gb=groupbox: self._handle_multi_group_action('add_below', b, gb, label, fields,
-                                                                                    required))
+                lambda _, b=base_name, gb=groupbox: self._handle_multi_group_action('add_below', b, gb, label, fields, required)
+            )
 
         # Insert the new groupbox into its parent container's layout
         if insert_pos is None:
@@ -228,7 +263,7 @@ class ParameterFormWidget(QWidget):
             if required and parent_layout.count() <= 1:
                 QMessageBox.warning(self, "Cannot Remove", "At least one group is required for this parameter.")
                 return
-            # We need to remove the widget from the layout before deleting it
+            # We need to remove the widget from the layout before deleting it so it registers when we re-title
             item = parent_layout.takeAt(current_index)
             if item and item.widget(): # Note: item.widget() == groupbox_ref and should be deleted as well.
                 item.widget().deleteLater()
@@ -238,11 +273,9 @@ class ParameterFormWidget(QWidget):
                 # TODO: add a plus button here instead and remove it later
                 self._add_group_instance(parent_layout, base_name, label, fields, required, is_multi=True)
         elif action == 'add_above':
-            self._add_group_instance(parent_layout, base_name, label, fields, required, is_multi=True,
-                                     insert_pos=current_index)
+            self._add_group_instance(parent_layout, base_name, label, fields, required, is_multi=True, insert_pos=current_index)
         elif action == 'add_below':
-            self._add_group_instance(parent_layout, base_name, label, fields, required, is_multi=True,
-                                     insert_pos=current_index + 1)
+            self._add_group_instance(parent_layout, base_name, label, fields, required, is_multi=True, insert_pos=current_index + 1)
 
     def _update_multi_group_titles(self, parent_layout, label, required):
         """Updates the titles of all groups in a multi-group list to be numbered correctly."""
@@ -254,7 +287,7 @@ class ParameterFormWidget(QWidget):
                 item.widget().setTitle(label_text)
                 group_idx += 1
 
-    def _make_widget_for_type(self, typ, placeholder=None, required=True):
+    def _make_widget_for_type(self, name, label, typ, required, placeholder=None):
         """Creates the appropriate QWidget for a given parameter type."""
         if isinstance(typ, (tuple, list)):
             w = QComboBox()
@@ -266,18 +299,30 @@ class ParameterFormWidget(QWidget):
             w.addItems(self.data_columns)
         elif typ == 'checkbox' or typ == bool:
             w = QCheckBox()
+        elif typ == 'label':
+            w = QLabel()
         else:
             w = QLineEdit()
 
         # Store definition info directly on the widget for later retrieval
+        w.setProperty('param_name', name)
+        w.setProperty('label', label)
         w.setProperty('typ', typ)
         w.setProperty('placeholder', placeholder)
         w.setProperty('required', required)
 
-        if placeholder and hasattr(w, 'setPlaceholderText') and typ not in ('label', 'checkbox'):
+        if placeholder and hasattr(w, 'setPlaceholderText') and typ not in ('label', 'checkbox', bool):
             w.setPlaceholderText(str(placeholder))
+
+        # Label and bool types
+        if placeholder and typ == 'label':
+            w.setText(placeholder)
         if typ in [bool, 'checkbox'] and placeholder is not None:
             w.setChecked(bool(placeholder))
+
+        # Add tooltip if type is required
+        if isinstance(typ, type) and typ not in [str, bool]:
+            w.setToolTip(f"{typ.__name__} value required.")
         return w
 
     def get_params(self):
@@ -321,7 +366,7 @@ class ParameterFormWidget(QWidget):
             param_name = widget.property('param_name')
             if not param_name: continue
 
-            if widget.property('is_multi_group_container'):
+            if widget.property(PROPERTY_MULTI_GROUP):
                 # Collect from a list of repeatable groups
                 group_values = []
                 container_layout = widget.layout()
@@ -331,13 +376,15 @@ class ParameterFormWidget(QWidget):
                         group_box = item.widget()
                         # The first item in the group's QVBoxLayout is the QFormLayout
                         form_layout = group_box.layout().itemAt(0).layout()
-                        group_values.append(self._collect_params_from_layout(form_layout))
+                        v = self._collect_params_from_layout(form_layout)
+                        if v:
+                            group_values.append(v)
                 params[param_name] = group_values
-            elif widget.property('is_static_group'):
+            elif widget.property(PROPERTY_GROUP):
                 # Collect from a single static group
                 form_layout = widget.layout()
                 params[param_name] = self._collect_params_from_layout(form_layout)
-            elif widget.property('is_multi_value_container'):
+            elif widget.property(PROPERTY_MULTI_VALUE):
                 # Collect from a simple multi-value container
                 values = []
                 container_layout = widget.layout()
@@ -360,7 +407,9 @@ class ParameterFormWidget(QWidget):
             else:
                 # Collect from a simple widget
                 typ = widget.property('typ')
-                params[param_name] = self._get_widget_value(widget, typ)
+                v = self._get_widget_value(widget, typ)
+                if v is not None and v != '':
+                    params[param_name] = v
 
         return params
 
@@ -374,47 +423,244 @@ class ParameterFormWidget(QWidget):
                 try:
                     return typ(val)
                 except (ValueError, TypeError):
+                    logger.warning(f"Could not cast widget value '{w.property('param_name')}' with value '{val}' to type '{typ}'.")
                     return val  # Return as string on failure
             return val
         if hasattr(w, 'text'): return w.text()
         return None
 
     def validate(self):
-        """Validates all required fields in the form, raising ValueError on failure."""
-        params = self.get_params()
-        # This validation needs to be recursive to handle nested required fields.
-        # For now, we'll keep the top-level validation.
-        for p_def in self.param_defs:
+        """
+        Recursively validates all required fields in the form, raising ValueError on failure.
+        Handles nested fields and conditional requirements within multi-groups.
+        """
+        params_data = self.get_params()
+        self._validate_recursive(self.param_defs, params_data)
+        return True  # If no exception was raised, validation passed
+
+    def _validate_recursive(self, param_defs, params_data):
+        """
+        A recursive helper to validate a set of parameter definitions against
+        a dictionary of collected data.
+        """
+        for p_def in param_defs:
             d = self._param_def_to_dict(p_def)
-            if d.get('required'):
-                name = d['name']
-                base_name = name.split('_%d')[0] if name else None
-                if not base_name: continue
+            name = d.get('name')
+            label = d.get('label')
+            typ = d.get('typ')
+            is_required = d.get('required')
 
-                label = d.get('label')
-                val = params.get(base_name)
+            if not name:
+                continue
 
-                if val is None or val == "" or val == []:
-                    raise ValueError(f"Required parameter '{label}' is missing.")
-        return True
+            # TODO: REWRITE THIS LOGIC!!!
+            is_multi_group = isinstance(typ, dict) and 'fields' in typ and (name.endswith('_%d') or typ.get('type') == 'multi')
+            is_group = isinstance(typ, dict) and 'fields' in typ and (not name.endswith('_%d') or typ.get('type') == 'group')
+            is_multi_value = not isinstance(typ, dict) and name.endswith('_%d')
+
+            base_name = name.split('_%d')[0]
+            value = params_data.get(base_name)
+
+            # --- Validation Logic ---
+
+            # Normal field (check value)
+            if not (is_multi_group or is_group or is_multi_value):
+                if value is None or value == '': # If there is a value
+                    # Required fields must have a value
+                    if is_required:
+                        raise ValueError(f"Required parameter '{label}' is missing.")
+                else:
+                    # Field type must be correctly castable
+                    if isinstance(typ, type) and typ is not str:
+                        try:
+                            typ(value)
+                        except ValueError as e:
+                            raise ValueError(f"Field '{label}' must be of type '{typ.__name__}': {e}")
+
+            # Required multi-value or multi-group list cannot be empty. Putting static group for consistency
+            if (is_multi_value or is_multi_group or is_group) and is_required:
+                if not value:  # Handles None or empty list []
+                    raise ValueError(f"At least one entry is required for '{label}'.")
+
+            ######## Recurse for groups/lists #########
+
+            # type: multi value
+            if is_multi_value and value:
+                if isinstance(value, list):
+                    if isinstance(typ, type) and typ is not str:
+                        for i, v in enumerate(value):
+                            try:
+                                typ(v)
+                            except ValueError as e:
+                                raise ValueError(f"Field '{label} {i+1}' must be of type '{typ.__name__}': {e}")
+                else:
+                    logger.warning(f"Unexpected value type for type multi value: {type(value).__name__}")
+
+            # type: group
+            if is_group and value:
+                if isinstance(value, dict):
+                    # Recursively validate the fields within group. Children requirements are enforced fully
+                    self._validate_recursive(typ['fields'], value)
+                else:
+                    logger.warning(f"Data for group '{label}' is not a dictionary. Skipping validation.")
+
+            # type: multi group
+            if is_multi_group and value:
+                if isinstance(value, list):
+                    # Regardless of whether multi groups are required, requirements of children are enforced
+                    for i, group_instance_data in enumerate(value):
+                        try:
+                            self._validate_recursive(typ['fields'], group_instance_data)
+                        except ValueError as e:
+                            raise ValueError(f"Error in '{label} {i + 1}': {e}")
+                else:
+                    logger.warning(f"Data for multi-group '{label}' is not a list. Skipping validation.")
 
 
     def set_params(self, params):
-        """Populates the form with values from a dictionary."""
-        # NOTE: This is a complex operation due to the dynamic nature of the form,
-        # especially for multi-value and multi-group fields which require adding/removing
-        # widgets to match the data. A full implementation would mirror the `import_params`
-        # logic from the original ProcessingDialog, which is beyond this refactor's scope.
-        logger.warning("set_params() is not fully implemented for dynamic forms.")
-        # Basic implementation for simple, top-level fields:
+        """
+        Populates the form with values from a dictionary. This method will clear and
+        recreate dynamic parts of the form (multi-value, multi-group) to match the
+        provided data structure.
+        """
+        if not isinstance(params, dict):
+            logger.error("set_params expects a dictionary.")
+            return
+
+        logger.debug(f"Setting parameters in form: {params}")
         top_level_layout = self.main_layout.itemAt(0).layout()
-        for i in range(top_level_layout.rowCount()):
-            field_item = top_level_layout.itemAt(i, FieldRole)
-            if field_item and field_item.widget():
-                w = field_item.widget()
-                name = w.property('param_name')
-                if name in params:
-                    self._set_widget_value(w, params[name])
+        self._set_params_in_layout(top_level_layout, params)
+
+    def _set_params_in_layout(self, layout, params, param_defs = None):
+        """
+        Recursively traverses a layout, finds widgets by their 'param_name' property,
+        and sets their values from the params dictionary.
+        """
+        if not param_defs:
+            param_defs = self.param_defs
+
+        if not layout or not params:
+            return
+
+        # Iterate through all widgets in the layout to find ones with a 'param_name'
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if not item: continue
+
+            widget = None
+            # Determine the actual widget to process for this layout item
+            if isinstance(layout, QFormLayout):
+                # For QFormLayout, the widget is in the FieldRole or SpanningRole
+                field_item = layout.itemAt(i, QFormLayout.FieldRole)
+                spanning_item = layout.itemAt(i, QFormLayout.SpanningRole)
+                if field_item and field_item.widget():
+                    widget = field_item.widget()
+                elif spanning_item and spanning_item.widget():
+                    widget = spanning_item.widget()
+            else:
+                # For other layouts (QVBoxLayout, etc.), the item is the widget
+                widget = item.widget()
+
+            if not widget:
+                # It might be a nested layout without being a QGroupBox. Recurse if so.
+                if item.layout():
+                    self._set_params_in_layout(item.layout(), params, param_defs)
+                continue
+
+            param_name = widget.property('param_name')
+            if not param_name:
+                logger.warning("Could not find parameter name for widget in layout: {widget}")
+                continue
+            if param_name not in params: # Value was not saved
+                continue
+
+            value = params[param_name]
+
+            # --- Dispatch to the correct handler based on widget type ---
+            if widget.property(PROPERTY_MULTI_GROUP):
+                self._set_multi_group_params(widget, value, param_defs)
+            elif widget.property(PROPERTY_GROUP):
+                if isinstance(value, dict):
+                    self._set_params_in_layout(widget.layout(), value)
+            elif widget.property(PROPERTY_MULTI_VALUE):
+                self._set_multi_value_params(widget, value)
+            else:
+                # This is a simple, single-value widget, so we set the value
+                self._set_widget_value(widget, value)
+                # Note: properties should already be set as we did not create any widgets
+
+    def _set_multi_group_params(self, container_group, group_values, param_defs=None):
+        """
+        Clears and repopulates a multi-group container based on a list of dictionaries.
+        """
+        if not param_defs:
+            param_defs = self.param_defs
+
+        if not isinstance(group_values, list):
+            logger.warning(
+                f"Expected a list for multi-group '{container_group.property('param_name')}', got {type(group_values)}.")
+            return
+
+        container_layout = container_group.layout()
+        # Clear existing group instances
+        while container_layout.count():
+            item = container_layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+
+        # Find the original parameter definition to get the fields
+        base_name = container_group.property('param_name')
+
+        import pprint
+        print('+'*20)
+        print(base_name)
+        pprint.pprint(param_defs)
+
+        param_def = next(
+            (p for p in param_defs if self._param_def_to_dict(p).get('name', '').startswith(base_name)), None)
+
+        if not param_def:
+            logger.error(f"Could not find parameter definition for multi-group '{base_name}'.")
+            return
+
+
+        d = self._param_def_to_dict(param_def)
+        label, fields, required = d['label'], d['typ']['fields'], d['required']
+        # Add a new group instance for each dictionary in the list
+        for single_group_params in group_values:
+            self._add_group_instance(container_layout, base_name, label, fields, required, is_multi=True)
+            new_groupbox = container_layout.itemAt(container_layout.count() - 1).widget()
+            print("="*20)
+            print(label)
+            pprint.pprint(single_group_params)
+            pprint.pprint(fields)
+            if new_groupbox and isinstance(single_group_params, dict):
+                form_layout = new_groupbox.layout().itemAt(0).layout()
+                self._set_params_in_layout(form_layout, single_group_params, param_defs = fields)
+
+    def _set_multi_value_params(self, container_widget, values):
+        """
+        Clears and repopulates a multi-value container based on a list of values.
+        """
+        if not isinstance(values, list):
+            logger.warning(f"Expected a list for multi-value '{container_widget.property('param_name')}', got {type(values)}.")
+            return
+
+        container_layout = container_widget.layout()
+        # Clear existing row widgets
+        while container_layout.count():
+            item = container_layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+
+        add_row = container_widget.property('add_row')
+        if add_row:
+            for value in values:
+                w = add_row()
+                self._set_widget_value(w, value)
+        else:
+            logger.error("Cannot find add_row() function.")
+
 
     def _set_widget_value(self, w, value):
         """Sets the value of a widget."""
@@ -427,4 +673,4 @@ class ParameterFormWidget(QWidget):
         elif isinstance(w, QLineEdit):
             w.setText(str(value))
         else:
-            print(f"Could not set widget value with type {type(w)}", value)
+            logger.error(f"Could not set widget value with type '{type(w)}' and value '{value}'")
