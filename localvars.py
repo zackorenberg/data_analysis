@@ -16,4 +16,8 @@ DEFAULT_PLOT_SAVE = os.path.join(PLOTS_DIR, 'plot.pdf')
 # Reading/writing data file formats
 DATA_DELIMITER = '  '
 
+# Behaviour flags
+REREAD_DATAFILE_ON_EDIT = False
+MPL_USE_STYLE_BACKEND = True # This uses plt.style instead of rcparams
+
 # Any other constants can be added here 
