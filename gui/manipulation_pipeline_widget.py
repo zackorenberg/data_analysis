@@ -13,6 +13,15 @@ from logger import get_logger
 from gui.plot_module_widget import ModuleConfigDialog
 from gui.parameter_form_widget import ParameterFormWidget
 
+"""
+Notes:
+
+Should we add target columns to pipeline instead of inside the pipeline parameters?
+
+Currently, a module can override 'target_column' parameter and mess everything up
+
+"""
+
 # Define the directory for manipulation modules.
 # TODO: Move this to localvars.py.
 
@@ -46,6 +55,8 @@ class ManipulationModule:
         Process the DataFrame and return the modified DataFrame.
         This method must be overridden by subclasses.
         :param df: The pandas DataFrame to process.
+
+        TODO: Do we need to return df since we modify it inline? Should we force a copy?
         """
         raise NotImplementedError("Each manipulation module must implement the process method.")
 
