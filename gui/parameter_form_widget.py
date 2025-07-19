@@ -9,6 +9,7 @@ logger = get_logger(__name__)
 FieldRole = 1  # QFormLayout.FieldRole
 LabelRole = 0  # QFormLayout.LabelRole
 
+ALLOW_REMOVAL_OF_NON_REQUIRED_MULTI_VALUE = True
 
 MULTI_VALUE_GOES_IN_GROUPBOX = True
 
@@ -48,6 +49,8 @@ class ParameterFormWidget(QWidget):
         This should have all the necessary stuff to validate a dictionary type
 
         Currently, it is just in _build_form_from_defs
+
+        When adding new types this should be used
         """
         pass
 
@@ -142,6 +145,7 @@ class ParameterFormWidget(QWidget):
             remove_btn = QPushButton('–')
             add_btn.setToolTip("Add new item below")
             remove_btn.setToolTip("Remove this item")
+
             add_btn.setMaximumWidth(36)
             remove_btn.setMaximumWidth(36)
 
@@ -182,7 +186,14 @@ class ParameterFormWidget(QWidget):
 
             # If the last row was removed, add a fresh one back
             if not required and container_layout.count() == 0:
-                add_row()
+                if ALLOW_REMOVAL_OF_NON_REQUIRED_MULTI_VALUE:
+                    self._create_add_first_item_button(
+                        container_layout,
+                        add_row,
+                        f"Add {rlabel}"
+                    )
+                else:
+                    add_row()
 
         # Add the whole container to the main form and add the first row
         if MULTI_VALUE_GOES_IN_GROUPBOX:
@@ -271,7 +282,12 @@ class ParameterFormWidget(QWidget):
 
             if not required and parent_layout.count() == 0:
                 # TODO: add a plus button here instead and remove it later
-                self._add_group_instance(parent_layout, base_name, label, fields, required, is_multi=True)
+                #self._add_group_instance(parent_layout, base_name, label, fields, required, is_multi=True)
+                self._create_add_first_item_button(
+                    parent_layout,
+                    lambda: self._add_group_instance(parent_layout, base_name, label, fields, required, is_multi=True),
+                    f"Add {label}"
+                )
         elif action == 'add_above':
             self._add_group_instance(parent_layout, base_name, label, fields, required, is_multi=True, insert_pos=current_index)
         elif action == 'add_below':
@@ -286,6 +302,21 @@ class ParameterFormWidget(QWidget):
                 label_text = f"{label} {group_idx + 1}" + (" *" if required else "")
                 item.widget().setTitle(label_text)
                 group_idx += 1
+
+    def _create_add_first_item_button(self, parent_layout, creation_funct, text='Add'):
+        """
+        Creates an "add" button for when the user removes a non-required multi group.
+        """
+        add_button = QPushButton(text)
+        add_button.setToolTip("Add new item")
+
+        def on_add_clicked():
+            parent_layout.removeWidget(add_button)
+            add_button.deleteLater()
+            creation_funct()
+
+        add_button.clicked.connect(on_add_clicked)
+        parent_layout.addWidget(add_button)
 
     def _make_widget_for_type(self, name, label, typ, required, placeholder=None):
         """Creates the appropriate QWidget for a given parameter type."""
@@ -383,7 +414,9 @@ class ParameterFormWidget(QWidget):
             elif widget.property(PROPERTY_GROUP):
                 # Collect from a single static group
                 form_layout = widget.layout()
-                params[param_name] = self._collect_params_from_layout(form_layout)
+                v = self._collect_params_from_layout(form_layout)
+                if v:
+                    params[param_name] = v
             elif widget.property(PROPERTY_MULTI_VALUE):
                 # Collect from a simple multi-value container
                 values = []
@@ -403,7 +436,8 @@ class ParameterFormWidget(QWidget):
                                 v = self._get_widget_value(w, typ)
                                 if v is not None and v != "":
                                     values.append(v)
-                params[param_name] = values
+                if values:
+                    params[param_name] = values
             else:
                 # Collect from a simple widget
                 typ = widget.property('typ')
@@ -419,6 +453,7 @@ class ParameterFormWidget(QWidget):
         if isinstance(w, QComboBox): return w.currentText()
         if isinstance(w, QLineEdit):
             val = w.text()
+            if val == '': return None
             if isinstance(typ, type) and typ is not str:
                 try:
                     return typ(val)
