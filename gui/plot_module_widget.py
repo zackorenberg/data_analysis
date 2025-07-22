@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import pyqtSignal, QSize, Qt
 from PyQt5.QtGui import QColor, QPainter, QPen
 from logger import get_logger
+from gui.parameter_form_widget import ParameterFormWidget
 
 def validate_bool(b): # Copied verbatim from matplotlib.rcsetup to avoid import
     """Convert b to ``bool`` or raise."""
@@ -233,7 +234,7 @@ class PlotModuleWidget(QWidget):
         # Get the currently stored configuration for this module
         current_config = self.module_configs.get(module_name, {})
 
-        dialog = ModuleConfigDialog(module_class.name, parameters, current_config, self)
+        dialog = ModuleConfigDialog(module_class.name, parameters, current_config, data_columns=None, parent=self)
         if dialog.exec_() == QDialog.Accepted:
             # If user clicks OK, save the new configuration
             self.module_configs[module_name] = dialog.get_params()
@@ -423,173 +424,40 @@ class ModuleConfigDialog(QDialog):
     It dynamically builds a form based on a PARAMETERS definition list.
     """
 
-    def __init__(self, module_name, parameters, current_values=None, parent=None):
+    def __init__(self, module_name, parameters, current_values=None, data_columns=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Configure: {module_name}")
         self.setMinimumWidth(350)
 
         self.parameters = parameters
-        self.current_values = current_values or {}
-        self.param_widgets = {}
 
         layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
+        self.param_form = ParameterFormWidget(parameters, data_columns, self)
+        if current_values:
+            self.param_form.set_params(current_values)
+        layout.addWidget(self.param_form)
 
-        # Build the form from the parameter definitions
-        for name, label, typ, _, default in parameters:
-            widget = self._make_widget_for_type(typ, default)
-
-            # Set the widget's current value from saved config or default
-            current_val = self.current_values.get(name, default)
-            self._set_widget_value(widget, current_val)
-
-            form_layout.addRow(f"{label}:", widget)
-            self.param_widgets[name] = widget
-
-        layout.addLayout(form_layout)
-        # New buttons, adding a reset to default option:
         button_layout = QHBoxLayout()
         reset_btn = QPushButton("Reset to Defaults")
         reset_btn.clicked.connect(self.reset_to_defaults)
         button_layout.addWidget(reset_btn)
         button_layout.addStretch(1)
-        # OK and Cancel buttons
+
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         button_layout.addWidget(button_box)
         layout.addLayout(button_layout)
-        #layout.addWidget(button_box)
 
     def reset_to_defaults(self):
-        """
-        Resets all parameter widgets in the dialog to their default values
-        as defined in the module's PARAMETERS list.
-        """
-        for name, label, typ, required, default_value in self.parameters:
-            if name in self.param_widgets:
-                widget = self.param_widgets[name]
-                # Special handling for color type, as its default_value might be a string like 'gray'
-                # and needs to be processed by _process_mpl_color_default before setting on ColorButton.
-                if typ == 'color':
-                    processed_default = self._process_mpl_color_default(default_value)
-                    if processed_default:
-                        widget.set_color(QColor(processed_default))
-                    else:
-                        widget.set_color(None)  # Clear the color if default is None/empty
-                else:
-                    self._set_widget_value(widget, default_value)
-        #QMessageBox.information(self, "Reset", "Parameters reset to default values.")
+        """Resets the form to its default values by recreating it."""
+        if self.param_form:
+            self.param_form.deleteLater()
 
-    def _process_mpl_color_default(self, value):
-        """Small helper to process mpl rcparam color values"""
-        if not value:
-            return None
-        if type(value) == str:
-            if value in ['None', 'auto', 'inherit']:
-                return None
-            # Test if float
-            try:
-                value = float(value)
-                value *= (255 if value <= 1 else 1)
-                value = int(value)
-                return QColor(value, value, value, 1).name()
-            except ValueError:
-                pass
-        if type(value) == float:
-            value *= (255 if value <= 1 else 1)
-            value = int(value)
-            return QColor(value, value, value, 1).name()
-        if type(value) == int:
-            return QColor(value, value, value, 1).name()
-        return value
-
-    def _make_widget_for_type(self, typ, default_value):
-        """Creates the appropriate QWidget for a given parameter type."""
-        if isinstance(typ, (list, tuple)):
-            widget = QComboBox()
-            widget.addItems([str(v) for v in typ])
-        elif typ == bool or typ == 'checkbox':
-            widget = QCheckBox()
-        elif typ == 'color':
-            widget = ColorButton()
-            if default_value:
-                default_value = self._process_mpl_color_default(default_value)
-                if default_value: # this case we'd want it to be clear and handled by mpl
-                    widget.set_color(QColor(default_value))
-        elif typ == 'textarea':  # <-- ADD THIS BLOCK
-            widget = QTextEdit()
-            widget.setAcceptRichText(False)  # Ensure plain text for code
-            widget.setMinimumHeight(150)  # Give it a reasonable default size
-            if default_value is not None:
-                # QTextEdit doesn't have a placeholder, so we set initial text
-                widget.setPlainText(str(default_value))
-        else:  # Handles str, int, float, etc.
-            widget = QLineEdit()
-            if default_value is not None:
-                widget.setPlaceholderText(str(default_value))
-        return widget
-
-    def _set_widget_value(self, widget, value):
-        """Sets the value of a widget, handling different widget types."""
-        if value is None:
-            return
-
-        if isinstance(widget, QComboBox):
-            index = widget.findText(str(value))
-            if index > -1:
-                widget.setCurrentIndex(index)
-        elif isinstance(widget, QCheckBox):
-            widget.setChecked(validate_bool(value))
-        elif isinstance(widget, QTextEdit):
-            widget.setPlainText(str(value))
-        elif isinstance(widget, ColorButton):
-            try:
-                value = self._process_mpl_color_default(value)
-                if value:
-                    widget.set_color(QColor(value))
-            except Exception as e:
-                logger.info(f"Could not set color widget to {value}: {e}")
-        elif isinstance(widget, QLineEdit):
-            widget.setText(str(value))
+        # Re-create with original parameters (which hold the defaults)
+        self.param_form = ParameterFormWidget(self.parameters, self.parent().data_columns if hasattr(self.parent(), 'data_columns') else None, self)
+        self.layout().insertWidget(0, self.param_form)
 
     def get_params(self):
-        """Reads the configured values from the widgets and returns them as a dict."""
-        params = {}
-        for name, widget in self.param_widgets.items():
-            # Find the original parameter definition to get the type
-            param_def = next((p for p in self.parameters if p[0] == name), None)
-            typ = param_def[2] if param_def else str
-            value = None
-
-            if isinstance(widget, QComboBox):
-                value = widget.currentText()
-            elif isinstance(widget, QCheckBox):
-                value = widget.isChecked()
-                params[name] = value
-                continue
-            elif isinstance(widget, ColorButton):
-                color = widget.get_color()
-                value = color.name() if color else None
-            elif isinstance(widget, QLineEdit):
-                value = widget.text()
-                # Try to cast to the correct type (e.g., float, int)
-                if isinstance(typ, type) and value:
-                    try:
-                        value = typ(value)
-                    except (ValueError, TypeError):
-                        # On failure, use the default value from the definition
-                        value = param_def[4] if param_def else None
-                elif not value:
-                    value = param_def[4] if param_def else None
-            elif isinstance(widget, QTextEdit):
-                value = widget.toPlainText()
-            if (param_def and param_def[3]) and not value:
-                QMessageBox.warning(self, f"Missing Parameter: {name}", f"You must specify a value for this parameter: '{param_def[1]}'.")
-                return {} # We wont specify any parameters
-
-
-            if value: # We don't want to give None values!
-                params[name] = value
-
-        return params
+        """Reads the configured values from the form widget."""
+        return self.param_form.get_params()
