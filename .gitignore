@@ -6,7 +6,11 @@ data/postprocessed/*
 data/plots/*
 data/*
 
+# Don't automatically upload user modules
 processing_modules/*.py
+plot_modules/*.py
+manipulation_modules/*.py
+
 
 # Data and settings specifics
 *.dat

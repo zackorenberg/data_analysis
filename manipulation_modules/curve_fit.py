@@ -14,12 +14,12 @@ def _function(x, %s):
 '''
 _function = None
 
-class CurveFit(ManipulationModule):
+class CurveFitExpression(ManipulationModule):
     """
     Perform a curve fit on target columns
     """
 
-    name = "Curve Fit"
+    name = "Curve Fit (Expression)"
     description = "Replaces target column(s) with a curve fit against a specified column from a user expression"
 
     PARAMETERS = [
@@ -33,12 +33,13 @@ class CurveFit(ManipulationModule):
         if curve_fit is None:
             raise ImportError("scipy is not installed. Please install it to use Curve Fit: pip install scipy")
         self.np_env =  {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        self.np_env['np'] = np
 
     def build_function(self, expression, parameters):
         #exec(exec_str%(", ".join(parameters), expression), globals(), self.np_env.copy())
         # return _function
-        local_env = self.np_env.copy()
-        exec(f'''def fit_function(x, {", ".join(parameters)}): return {expression}''', {'__builtins__':{}}, local_env)
+        local_env = {} #self.np_env.copy()
+        exec(f'''def fit_function(x, {", ".join(parameters)}): return {expression}''', self.np_env, local_env)
         return local_env['fit_function']
 
 
@@ -85,7 +86,7 @@ class CurveFitFunction(ManipulationModule):
     Perform a curve fit on target columns
     """
 
-    name = "Curve Fit (Complex Function)"
+    name = "Curve Fit (Custom Function)"
     description = "Replaces target column(s) with a curve fit against a specified column from a user expression"
 
     PARAMETERS = [
@@ -101,11 +102,12 @@ def fit_function(x, a, b, c):
         if curve_fit is None:
             raise ImportError("scipy is not installed. Please install it to use Curve Fit: pip install scipy")
         self.np_env = {k: getattr(np, k) for k in dir(np) if not k.startswith('_')}
+        self.np_env['np'] = np
 
     def build_function(self, funct_str):
         #exec("global _function\n" + funct_str + "\n_function = fit_function", globals(), self.np_env)
-        local_env = self.np_env.copy()
-        exec(funct_str, {"__builtins__":{}}, local_env) #self.np_env)
+        local_env = {}
+        exec(funct_str, self.np_env, local_env) #self.np_env)
         return local_env['fit_function'] if 'fit_function' in local_env else next(v for k,v in local_env.items() if k not in self.np_env)
 
     def process(self, df):

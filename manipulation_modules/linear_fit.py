@@ -59,10 +59,6 @@ class LinearFit(ManipulationModule):
                 return (out.slope, out.intercept), (out.stderr, out.intercept_stderr)
         self.linfit = linfit
 
-
-
-
-
     def process(self, df):
         print_fit = self.params.get('print_fit', False)
 

@@ -4,8 +4,8 @@ import importlib.util
 import pandas as pd
 from PyQt5.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QListWidget, QPushButton,
-    QInputDialog, QMessageBox, QAbstractItemView, QDialogButtonBox,
-    QListWidgetItem
+    QInputDialog, QMessageBox, QAbstractItemView, QDialogButtonBox, QLabel, QComboBox,
+    QListWidgetItem, QFrame
 )
 from PyQt5.QtCore import Qt
 from logger import get_logger
@@ -87,7 +87,8 @@ def discover_manipulation_modules(modules_dir=MANIPULATION_MODULES_DIR):
                     attr = getattr(module, attr_name)
                     if isinstance(attr, type) and issubclass(attr, ManipulationModule) and attr != ManipulationModule:
                         # Use the class's `name` attribute for display
-                        modules.append((attr.name, attr))
+                        params = getattr(attr, 'PARAMETERS', getattr(module, 'PARAMETERS', []))
+                        modules.append((attr.name, attr, params))
             except Exception as e:
                 logger.error(f"Error loading manipulation module {filename}: {e}")
     return modules
@@ -108,7 +109,7 @@ def apply_manipulation_pipeline(df, pipeline):
     current_df = df.copy()
 
     try:
-        available_modules = dict(discover_manipulation_modules())
+        available_modules = {name:cls for name,cls,_ in discover_manipulation_modules()}
     except Exception as e:
         logger.error(f"Could not discover manipulation modules: {e}")
         raise RuntimeError(f"Could not load manipulation modules: {e}")
@@ -155,11 +156,97 @@ class ManipulationDialog(QDialog):
     def get_pipeline(self):
         return self.pipeline_widget.get_pipeline()
 
+class ManipulationConfigDialog(QDialog):
+    universal_params = [
+        ('target_columns_%d', 'Columns to Manipulate', 'dropdown_column', True, None)
+    ]
+    def __init__(self, modules, current_module = None, current_parameters = None, data_columns = None,parent = None):
+        super().__init__(parent)
+        self.setWindowTitle('Configure Manipulation')
+        self.modules = modules
+        self.data_columns = data_columns
+
+        self.parameter_form_widget = None
+        self.parameter_container = None
+        self.parameter_container_layout = None
+
+        self.module_combo = None
+
+        self._init_ui(current_module = current_module, current_parameters = current_parameters)
+
+    def _init_ui(self, current_module = None, current_parameters = None):
+        layout = QVBoxLayout(self)
+
+        module_label = QLabel("Module:")
+        self.module_combo = QComboBox()
+        self.module_combo.setObjectName('module_combo')
+        self.module_combo.addItems([name for name,*_ in self.modules])
+        layout.addWidget(module_label)
+        layout.addWidget(self.module_combo)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep)
+
+        self.parameter_container = QWidget()
+        self.parameter_container_layout = QVBoxLayout(self.parameter_container)
+        self.parameter_container_layout.setContentsMargins(0,0,0,0)
+        layout.addWidget(self.parameter_container)
+
+        # Add buttons
+        ok_cancel_reset = QHBoxLayout()
+        reset_btn = QPushButton("Reset to Defaults")
+        reset_btn.clicked.connect(lambda: self._on_module_changed(self.module_combo.currentIndex()))
+        ok_cancel_reset.addWidget(reset_btn)
+        ok_cancel_reset.addStretch(1)
+        ok_btn = QPushButton("OK")
+        cancel_btn = QPushButton("Cancel")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+        ok_cancel_reset.addWidget(ok_btn)
+        ok_cancel_reset.addWidget(cancel_btn)
+        layout.addLayout(ok_cancel_reset)
+        layout.setSizeConstraint(layout.SetFixedSize)
+
+        if current_module and current_module in (module_names := [name for name, *_ in self.modules]):
+            current_index = module_names.index(current_module)
+            self.module_combo.setCurrentIndex(current_index)
+            self._on_module_changed(current_index, current_parameters)
+        else:
+            self._on_module_changed(0)
+
+
+
+        self.module_combo.currentIndexChanged.connect(self._on_module_changed)
+
+    def _on_module_changed(self, idx, current_parameters = None):
+        # Clear old widgets
+        if self.parameter_form_widget:
+            self.parameter_container_layout.removeWidget(self.parameter_form_widget)
+            self.parameter_form_widget.deleteLater()
+            self.parameter_form_widget = None
+
+        if idx < 0 or idx >= len(self.modules):
+            return
+
+        name, cls, parameters = self.modules[idx]
+        self.selected_module = cls
+        # Create the new form widget
+        self.parameter_form_widget = ParameterFormWidget(self.universal_params + parameters, self.data_columns, None)
+        if current_parameters: self.parameter_form_widget.set_params(current_parameters)
+        self.parameter_container_layout.addWidget(self.parameter_form_widget)
+
+    def get_module(self):
+        return self.modules[self.module_combo.currentIndex()]
+    def get_params(self):
+        return self.parameter_form_widget.get_params()
 
 class ManipulationPipelineWidget(QWidget):
     """
     A widget for creating and managing a pipeline of data manipulation modules.
     """
+
 
     def __init__(self, parent=None, data_columns=None):
         super().__init__(parent)
@@ -167,7 +254,6 @@ class ManipulationPipelineWidget(QWidget):
         self._pipeline = []  # List of {'name': str, 'params': dict}
         self._available_modules = []
         self._init_ui()
-        self._load_available_modules()
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -203,8 +289,8 @@ class ManipulationPipelineWidget(QWidget):
 
     def _load_available_modules(self):
         """Discovers manipulation modules."""
-        self._available_modules = [name for name, cls in discover_manipulation_modules()]
-        logger.info(f"Discovered manipulation modules: {self._available_modules}")
+        self._available_modules = (discover_manipulation_modules())
+        logger.info(f"Discovered manipulation modules: {[name for name,*_ in self._available_modules]}")
 
     def _refresh_list_widget(self):
         self.pipeline_list.clear()
@@ -216,16 +302,24 @@ class ManipulationPipelineWidget(QWidget):
 
     def _add_step(self):
         if not self._available_modules:
+            self._load_available_modules()
+        if not self._available_modules:
             QMessageBox.warning(self, "No Modules Found",
                                 "Could not find any manipulation modules in the 'manipulation_modules' directory.")
             return
         # TODO: Make custom QDialog which will have configuration field in it, so it can be configured when added
-        module_name, ok = QInputDialog.getItem(self, "Add Manipulation Step", "Select Module:", self._available_modules,
-                                               0, False)
-        if ok and module_name:
-            # Add with default parameters
-            self._pipeline.append({'name': module_name, 'params': {}})
+
+        dialog = ManipulationConfigDialog(self._available_modules, parent=self, data_columns=self.data_columns)
+        if dialog.exec_() == QDialog.Accepted:
+            module_name, *_ = dialog.get_module()
+            self._pipeline.append({'name': module_name, 'params': dialog.get_params()})
             self._refresh_list_widget()
+
+        #module_name, ok = QInputDialog.getItem(self, "Add Manipulation Step", "Select Module:", self._available_modules.keys(), 0, False)
+        #if ok and module_name:
+        #    # Add with default parameters
+        #    self._pipeline.append({'name': module_name, 'params': {}})
+        #    self._refresh_list_widget()
 
     def _remove_step(self):
         current_row = self.pipeline_list.currentRow()
@@ -243,8 +337,8 @@ class ManipulationPipelineWidget(QWidget):
         module_name = step_config['name']
 
         try:
-            available_modules = dict(discover_manipulation_modules())
-            module_class = available_modules.get(module_name)
+            self._available_modules = discover_manipulation_modules()
+            _, module_class, module_specific_params = next((name, cls, params) for name, cls, params in self._available_modules if name == module_name)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not load manipulation modules: {e}")
             return
@@ -254,7 +348,7 @@ class ManipulationPipelineWidget(QWidget):
             return
 
         # Get the module's specific parameters
-        module_specific_params = getattr(module_class, 'PARAMETERS', [])
+        #module_specific_params = getattr(module_class, 'PARAMETERS', [])
 
         # Prepend a universal 'target_columns' parameter to every module's config dialog.
         # This makes it easy for modules to know which columns to operate on.
@@ -263,8 +357,9 @@ class ManipulationPipelineWidget(QWidget):
         ]
 
         # Combine universal and module-specific parameters for the dialog
-        full_parameters = universal_params + module_specific_params
+        full_parameters = module_specific_params
 
+        """
         # Temporarily stealing until we make our own closer to processing_dialog.py (See TODO above)
         dialog = ModuleConfigDialog(
             module_name,
@@ -273,11 +368,25 @@ class ManipulationPipelineWidget(QWidget):
             data_columns=self.data_columns,
             parent=self
         )
+        """
+        dialog = ManipulationConfigDialog(
+            self._available_modules,
+            data_columns=self.data_columns,
+            current_module=module_name,
+            current_parameters=step_config.get('params', {}),
+            parent=self
+        )
 
         # Update pipline parameters
         if dialog.exec_() == QDialog.Accepted:
+            name, cls, parameters = dialog.get_module()
             self._pipeline[current_row]['params'] = dialog.get_params()
-            logger.info(f"Updated parameters for '{module_name}': {self._pipeline[current_row]['params']}")
+
+            if name != module_name:
+                logger.debug(f"Manipulation module changed from {module_name} to {name}.")
+                self._pipeline[current_row]['name'] = name
+                self._refresh_list_widget()
+            logger.info(f"Updated parameters for '{name}': {self._pipeline[current_row]['params']}")
 
     def _on_rows_moved(self, parent, start, end, dest, dest_row):
         """Updates the internal pipeline list when items are reordered in the UI."""

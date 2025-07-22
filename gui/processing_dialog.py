@@ -76,7 +76,7 @@ class ProcessingDialog(QDialog):
             if placeholder and hasattr(w, 'setPlaceholderText') and typ not in ('label', 'checkbox'):
                 w.setPlaceholderText(str(placeholder))
             if typ == 'checkbox' and placeholder:
-                w.setChecked(bool(placeholder))
+                w.setChecked(bool(placeholder)) # TODO: MAKE THIS VALIDATEBOOL WHICH WILL BE MOVED TO A GLOBAL FUNCTIONS FILE
             self.base_form.addRow(label + (" *" if required else ""), w)
             self.base_param_widgets[name] = w
         base_group = QGroupBox("Global Parameters")
