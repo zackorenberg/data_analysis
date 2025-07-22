@@ -9,7 +9,7 @@ class AverageLine(ManipulationModule):
     PARAMETERS = []
 
     def process(self, df, full_plot_params=None):
-        for column in self.params.get('target_columns'):
+        for column in self.target_columns():
             df[column] = df[column].mean()
 
         return df

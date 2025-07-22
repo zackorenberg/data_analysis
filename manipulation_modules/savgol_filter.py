@@ -22,7 +22,7 @@ class SavgolFilter(ManipulationModule):
 
     def process(self, df):
 
-        for column in self.params.get('target_columns', []):
+        for column in self.target_columns():
             if column not in df.columns:
                 raise ValueError(f"Column '{column}' not found in DataFrame for Savgol filter.")
 

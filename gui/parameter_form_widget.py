@@ -1,6 +1,6 @@
 import re
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QPushButton,
-                             QLineEdit, QComboBox, QCheckBox, QLabel, QMessageBox)
+                             QLineEdit, QComboBox, QCheckBox, QLabel, QMessageBox, QTextEdit)
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -16,6 +16,17 @@ MULTI_VALUE_GOES_IN_GROUPBOX = True
 PROPERTY_MULTI_VALUE = 'is_multi_value_container'
 PROPERTY_MULTI_GROUP = 'is_multi_group_container'
 PROPERTY_GROUP = 'is_group_container'
+
+def validate_bool(b): # Copied verbatim from matplotlib.rcsetup to avoid import
+    """Convert b to ``bool`` or raise."""
+    if isinstance(b, str):
+        b = b.lower()
+    if b in ('t', 'y', 'yes', 'on', 'true', '1', 1, True):
+        return True
+    elif b in ('f', 'n', 'no', 'off', 'false', '0', 0, False):
+        return False
+    else:
+        raise ValueError(f'Cannot convert {b!r} to bool')
 
 class ParameterFormWidget(QWidget):
     """
@@ -332,6 +343,12 @@ class ParameterFormWidget(QWidget):
             w = QCheckBox()
         elif typ == 'label':
             w = QLabel()
+        elif typ == 'textarea':
+            w = QTextEdit()
+            w.setMinimumHeight(150)
+            if placeholder is not None:
+                # QTextEdit doesn't have a placeholder, so we set initial text
+                w.setPlainText(str(placeholder))
         else:
             w = QLineEdit()
 
@@ -349,7 +366,7 @@ class ParameterFormWidget(QWidget):
         if placeholder and typ == 'label':
             w.setText(placeholder)
         if typ in [bool, 'checkbox'] and placeholder is not None:
-            w.setChecked(bool(placeholder))
+            w.setChecked(validate_bool(placeholder))
 
         # Add tooltip if type is required
         if isinstance(typ, type) and typ not in [str, bool]:
@@ -451,6 +468,7 @@ class ParameterFormWidget(QWidget):
         """Retrieves the value from a widget, casting it to its original type if possible."""
         if isinstance(w, QCheckBox): return w.isChecked()
         if isinstance(w, QComboBox): return w.currentText()
+        if isinstance(w, QTextEdit): return w.toPlainText()
         if isinstance(w, QLineEdit):
             val = w.text()
             if val == '': return None
@@ -704,8 +722,10 @@ class ParameterFormWidget(QWidget):
             idx = w.findText(str(value))
             if idx >= 0: w.setCurrentIndex(idx)
         elif isinstance(w, QCheckBox):
-            w.setChecked(bool(value))
+            w.setChecked(validate_bool(value))
         elif isinstance(w, QLineEdit):
             w.setText(str(value))
+        elif isinstance(w, QTextEdit):
+            w.setPlainText(str(value))
         else:
             logger.error(f"Could not set widget value with type '{type(w)}' and value '{value}'")

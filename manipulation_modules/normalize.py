@@ -9,7 +9,7 @@ class Normalize(ManipulationModule):
     PARAMETERS = []
 
     def process(self, df):
-        for column in self.params.get('target_columns', []):
+        for column in self.target_columns():
             min_val = df[column].min()
             max_val = df[column].max()
             range_val = max_val - min_val
