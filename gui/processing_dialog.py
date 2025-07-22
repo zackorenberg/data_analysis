@@ -1,5 +1,4 @@
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QFormLayout, QLineEdit, QPushButton, QLabel, QFileDialog, QMessageBox, QWidget, QGroupBox, QCheckBox, QFrame, QLayout
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QComboBox, QFormLayout, QLineEdit, QPushButton, QLabel, QFileDialog, QMessageBox, QWidget, QGroupBox, QCheckBox, QFrame, QLayout
 import json
 import os
 from DataManagement.module_loader import discover_modules
@@ -7,7 +6,7 @@ from localvars import PROCESSING_MODULES_DIR
 from logger import get_logger
 from gui.parameter_form_widget import ParameterFormWidget
 import re
-from processing_base import BaseProcessingModule
+from gui.shared.smart_dialog import SmartDialog as QDialog
 
 logger = get_logger(__name__)
 

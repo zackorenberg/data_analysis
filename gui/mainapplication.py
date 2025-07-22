@@ -19,6 +19,7 @@ from localvars import RAW_DATA_DIR, PREPROCESSED_DATA_DIR, POSTPROCESSED_DATA_DI
 from gui.mpl_rcparams_widget import MplRcParamsWidget
 from gui.processing_dialog import ProcessingDialog
 from gui.plot_module_widget import PlotModuleWidget
+from gui.manipulation_pipeline_widget import apply_manipulation_pipeline
 
 logger = get_logger(__name__)
 
@@ -465,7 +466,8 @@ class MainWindow(QMainWindow):
         logger.debug(f"Adding plot line for file: {file_path}, params: {params}")
         self.set_status_message("Adding plot line...")
         try:
-            x, y = prepare_plot_data(df, params, logger)
+            manipulated_df = apply_manipulation_pipeline(df, params.get('manipulations', []))
+            x, y = prepare_plot_data(manipulated_df, params, logger)
         except Exception as e:
             logger.error(f"Error preparing plot data for file: {file_path}, params: {params}, error: {e}")
             QMessageBox.warning(self, "Error", f"Could not prepare plot data for file:\n{file_path}\n{e}")
@@ -524,7 +526,8 @@ class MainWindow(QMainWindow):
         logger.debug(f"Updating plot line idx={idx}, file={file_path}, params={params}")
         self.set_status_message("Updating plot line...")
         try:
-            x, y = prepare_plot_data(df, params, logger)
+            manipulated_df = apply_manipulation_pipeline(df, params.get('manipulations', []))
+            x, y = prepare_plot_data(manipulated_df, params, logger)
         except Exception as e:
             logger.error(f"Error preparing updated plot data for file: {file_path}, params: {params}, error: {e}")
             QMessageBox.warning(self, "Error", f"Could not prepare updated plot data for file:\n{file_path}\n{e}")
@@ -590,7 +593,8 @@ class MainWindow(QMainWindow):
                     continue
             params = line_info['params']
             try:
-                x, y = prepare_plot_data(df, params, logger)
+                manipulated_df = apply_manipulation_pipeline(df, params.get('manipulations', []))
+                x, y = prepare_plot_data(manipulated_df, params, logger)
             except Exception as e:
                 logger.error(f"Error redrawing plot data for file: {line_info['file']}, params: {params}, error: {e}")
                 QMessageBox.warning(self, "Error", f"Could not redraw plot data for file:\n{line_info['file']}\n{e}")

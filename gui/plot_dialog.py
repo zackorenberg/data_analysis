@@ -2,6 +2,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBo
                              QTextEdit, QColorDialog, QLayout, QMessageBox, QGroupBox, QWidget)
 from PyQt5.QtCore import pyqtSignal, QSize, Qt
 from PyQt5.QtGui import QColor, QPainter, QPen
+from gui.manipulation_pipeline_widget import ManipulationDialog
 
 
 class ColorButton(QPushButton):
@@ -192,6 +193,8 @@ class PlotParamDialog(QDialog):
         self.columns = columns
         self.current_params = current_params or {}
         self.comments = comments or []
+        # Store the pipeline configuration locally in the dialog
+        self.manipulation_pipeline = self.current_params.get('manipulations', [])
         self._init_ui()
 
     def _init_ui(self):
@@ -235,6 +238,11 @@ class PlotParamDialog(QDialog):
         self.shared_options = _SharedPlotOptionsWidget(self.current_params)
         main_layout.addWidget(self.shared_options)
 
+        # --- Manipulation Pipeline Button ---
+        self.manip_button = QPushButton("Configure Manipulations...")
+        self.manip_button.clicked.connect(self._open_manipulation_dialog)
+        main_layout.addWidget(self.manip_button)
+
         # --- OK/Cancel Buttons ---
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -249,6 +257,14 @@ class PlotParamDialog(QDialog):
         main_layout.setSizeConstraint(QLayout.SetFixedSize)
         self.setLayout(main_layout)
 
+    def _open_manipulation_dialog(self):
+        """Opens the dedicated dialog to configure the manipulation pipeline."""
+        # Pass the current pipeline config and available data columns
+        dialog = ManipulationDialog(self.manipulation_pipeline, self.columns, self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.manipulation_pipeline = dialog.get_pipeline()
+            # The result is grabbed in accept(), no signal needed.
+
     def accept(self):
         params = {
             'x': self.x_combo.currentText(),
@@ -259,6 +275,7 @@ class PlotParamDialog(QDialog):
 
         shared_params = self.shared_options.get_params()
         params.update(shared_params)
+        params['manipulations'] = self.manipulation_pipeline
 
         if 'legend' not in params:
             params['legend'] = f"{params['y']} vs {params['x']}"
@@ -278,6 +295,7 @@ class CalcPlotParamDialog(QDialog):
         self.columns = columns
         self.variable_rows = []
         self.current_params = current_params or {}
+        self.manipulation_pipeline = self.current_params.get('manipulations', [])
         self.comments = comments or []
         self._init_ui()
 
@@ -328,6 +346,11 @@ class CalcPlotParamDialog(QDialog):
         self.shared_options = _SharedPlotOptionsWidget(self.current_params)
         main_layout.addWidget(self.shared_options)
 
+        # --- Manipulation Pipeline Button ---
+        self.manip_button = QPushButton("Configure Manipulations...")
+        self.manip_button.clicked.connect(self._open_manipulation_dialog)
+        main_layout.addWidget(self.manip_button)
+
         # --- OK/Cancel Buttons ---
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -341,6 +364,12 @@ class CalcPlotParamDialog(QDialog):
 
         main_layout.setSizeConstraint(QLayout.SetFixedSize)
         self.setLayout(main_layout)
+
+    def _open_manipulation_dialog(self):
+        """Opens the dedicated dialog to configure the manipulation pipeline."""
+        dialog = ManipulationDialog(self.manipulation_pipeline, self.columns, self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.manipulation_pipeline = dialog.get_pipeline()
 
     def add_variable_row(self):
         self._add_variable_row_with_data("", "")
@@ -406,6 +435,7 @@ class CalcPlotParamDialog(QDialog):
 
         shared_params = self.shared_options.get_params()
         params.update(shared_params)
+        params['manipulations'] = self.manipulation_pipeline
 
         if 'legend' not in params:
             params['legend'] = f"{y_expr} vs {x_expr}"
