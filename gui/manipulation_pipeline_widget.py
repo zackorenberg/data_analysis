@@ -172,17 +172,34 @@ class ManipulationConfigDialog(QDialog):
 
         self.module_combo = None
 
+        self.description_label = QLabel()
+        self.description_label.setWordWrap(True)
+
         self._init_ui(current_module = current_module, current_parameters = current_parameters)
 
     def _init_ui(self, current_module = None, current_parameters = None):
         layout = QVBoxLayout(self)
 
+        # Lets make the module selection span horizontally. I'm sure theres a better way to do this but I do not know it
+        module_widget, module_layout = QWidget(), QHBoxLayout()
+        module_widget.setLayout(module_layout)
+        module_layout.setContentsMargins(0,0,0,0)
+
+        # Module code
         module_label = QLabel("Module:")
         self.module_combo = QComboBox()
         self.module_combo.setObjectName('module_combo')
         self.module_combo.addItems([name for name,*_ in self.modules])
-        layout.addWidget(module_label)
-        layout.addWidget(self.module_combo)
+
+        # The combo box size is a good way to set the minimum dialog size
+        self.module_combo.setMinimumWidth(200)
+        self.module_combo.setSizePolicy(self.sizePolicy().Expanding, self.sizePolicy().Expanding)
+
+        # Configure module layout
+        module_layout.addWidget(module_label)
+        module_layout.addWidget(self.module_combo)
+        layout.addWidget(module_widget)
+        layout.addWidget(self.description_label)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
@@ -216,8 +233,6 @@ class ManipulationConfigDialog(QDialog):
         else:
             self._on_module_changed(0)
 
-
-
         self.module_combo.currentIndexChanged.connect(self._on_module_changed)
 
     def _on_module_changed(self, idx, current_parameters = None):
@@ -231,6 +246,7 @@ class ManipulationConfigDialog(QDialog):
             return
 
         name, cls, parameters = self.modules[idx]
+        self.description_label.setText(getattr(cls, 'description', ''))
         self.selected_module = cls
         # Create the new form widget
         self.parameter_form_widget = ParameterFormWidget(self.universal_params + parameters, self.data_columns, None)
