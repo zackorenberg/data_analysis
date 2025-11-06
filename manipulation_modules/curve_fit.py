@@ -7,6 +7,7 @@ try:
 except ImportError:
     curve_fit = None
 
+
 exec_str = f'''
 global _function
 def _function(x, %s): 
@@ -25,7 +26,8 @@ class CurveFitExpression(ManipulationModule):
     PARAMETERS = [
         ('x_column', 'X-axis Column', 'dropdown_column', True),
         ('variables_%d', 'Variables', str, True, 'a'),
-        ('expression', 'Expression', str, True, 'a*x**2 + b*x + c')
+        ('expression', 'Expression', str, True, 'a*x**2 + b*x + c'),
+        ('print_fit', 'Print Fit Parameters', 'checkbox', False, True)
     ]
 
     def __init__(self, params=None):
@@ -55,9 +57,12 @@ class CurveFitExpression(ManipulationModule):
         expression = self.params.get('expression')
 
         if not parameters:
-            raise ValueError("Parameters must be supplied to perform a curve fit")
+            raise ValueError("Variables must be supplied to perform a curve fit")
         if not expression:
             raise ValueError("Expression must be supplied to perform a curve fit")
+
+        if not all([p.isidentifier() for p in parameters]):
+            raise ValueError("Variables must be of valid identifier format (Contains only a-z, A-Z, 0-9, and _)")
 
         try:
             func = self.build_function(expression, parameters)
@@ -94,7 +99,8 @@ class CurveFitFunction(ManipulationModule):
         ('function', 'Function', 'textarea', True, '''# Your function goes here
 def fit_function(x, a, b, c):
     return a*x**2 + b*x + c
-''')
+'''),
+        ('print_fit', 'Print Fit Parameters', 'checkbox', False, True)
     ]
 
     def __init__(self, params=None):

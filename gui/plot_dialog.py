@@ -4,6 +4,8 @@ from PyQt5.QtCore import pyqtSignal, QSize, Qt
 from PyQt5.QtGui import QColor, QPainter, QPen
 from gui.manipulation_pipeline_widget import ManipulationDialog
 
+from gui.shared.misc_qt import QCompactTextEdit
+from gui.shared.smart_dialog import SmartDialog
 
 class ColorButton(QPushButton):
     """A button that displays a color and opens a color dialog on click."""
@@ -61,9 +63,11 @@ class ColorButton(QPushButton):
 class _SharedPlotOptionsWidget(QWidget):
     """A reusable widget containing all common plot options (filtering, masking, styling)."""
 
-    def __init__(self, current_params=None, parent=None):
+    def __init__(self, current_params=None, columns = None, parent=None):
         super().__init__(parent)
         self.current_params = current_params or {}
+        self.columns = columns
+        self.manipulation_pipeline = self.current_params.get('manipulations', [])
         self._init_ui()
 
     def _init_ui(self):
@@ -98,17 +102,7 @@ class _SharedPlotOptionsWidget(QWidget):
         self.mask_expr_layout = QVBoxLayout()
         mask_label = QLabel("e.g., abs(x) <= 10 or y > 0")
         self.mask_expr_layout.addWidget(mask_label)
-
-        self.mask_expr_edits = []
-        mask_exprs = self.current_params.get('mask_exprs', [])
-        if isinstance(mask_exprs, str): mask_exprs = [mask_exprs]
-
-        if mask_exprs:
-            for expr in mask_exprs:
-                self._add_mask_expr_field(expr)
-        else:
-            self._add_mask_expr_field()  # Add one empty field to start
-
+        # Add buttons
         mask_btns_layout = QHBoxLayout()
         add_mask_btn = QPushButton("+")
         remove_mask_btn = QPushButton("–")
@@ -118,6 +112,15 @@ class _SharedPlotOptionsWidget(QWidget):
         mask_btns_layout.addWidget(add_mask_btn)
         mask_btns_layout.addWidget(remove_mask_btn)
         self.mask_expr_layout.addLayout(mask_btns_layout)
+        # Add current mask expressions or one mask expression
+        self.mask_expr_edits = []
+        mask_exprs = self.current_params.get('mask_exprs', [])
+        if isinstance(mask_exprs, str): mask_exprs = [mask_exprs]
+        if mask_exprs:
+            for expr in mask_exprs:
+                self._add_mask_expr_field(expr)
+        else:
+            self._add_mask_expr_field()  # Add one empty field to start
 
         mask_group.setLayout(self.mask_expr_layout)
         layout.addWidget(mask_group)
@@ -151,6 +154,11 @@ class _SharedPlotOptionsWidget(QWidget):
         styling_group.setLayout(style_form_layout)
         layout.addWidget(styling_group)
 
+        # --- Manipulation Pipeline Button ---
+        self.manip_button = QPushButton(f"Configure Manipulations... ({len(self.manipulation_pipeline)})")
+        self.manip_button.clicked.connect(self._open_manipulation_dialog)
+        layout.addWidget(self.manip_button)
+
     def _add_mask_expr_field(self, value=""):
         edit = QLineEdit(value)
         edit.setPlaceholderText("e.g. y > 0")
@@ -179,10 +187,21 @@ class _SharedPlotOptionsWidget(QWidget):
         if self.marker_combo.currentText(): params['marker'] = self.marker_combo.currentText()
         if self.color_btn.get_color(): params['color'] = self.color_btn.get_color().name()
 
+        if self.manipulation_pipeline: params['manipulations'] = self.manipulation_pipeline
+
         return params
 
 
-class PlotParamDialog(QDialog):
+    def _open_manipulation_dialog(self):
+        """Opens the dedicated dialog to configure the manipulation pipeline."""
+        # Pass the current pipeline config and available data columns
+        dialog = ManipulationDialog(self.manipulation_pipeline, self.columns, self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.manipulation_pipeline = dialog.get_pipeline()
+            self.manip_button.setText(f"Configure Manipulations... ({len(self.manipulation_pipeline)})")
+
+
+class PlotParamDialog(SmartDialog):
     """Dialog for simple X vs Y plotting with optional calculations."""
     paramsSelected = pyqtSignal(dict)
 
@@ -193,8 +212,6 @@ class PlotParamDialog(QDialog):
         self.columns = columns
         self.current_params = current_params or {}
         self.comments = comments or []
-        # Store the pipeline configuration locally in the dialog
-        self.manipulation_pipeline = self.current_params.get('manipulations', [])
         self._init_ui()
 
     def _init_ui(self):
@@ -235,13 +252,8 @@ class PlotParamDialog(QDialog):
         main_layout.addWidget(source_group)
 
         # --- Shared Options ---
-        self.shared_options = _SharedPlotOptionsWidget(self.current_params)
+        self.shared_options = _SharedPlotOptionsWidget(self.current_params, self.columns, self)
         main_layout.addWidget(self.shared_options)
-
-        # --- Manipulation Pipeline Button ---
-        self.manip_button = QPushButton("Configure Manipulations...")
-        self.manip_button.clicked.connect(self._open_manipulation_dialog)
-        main_layout.addWidget(self.manip_button)
 
         # --- OK/Cancel Buttons ---
         button_layout = QHBoxLayout()
@@ -257,13 +269,6 @@ class PlotParamDialog(QDialog):
         main_layout.setSizeConstraint(QLayout.SetFixedSize)
         self.setLayout(main_layout)
 
-    def _open_manipulation_dialog(self):
-        """Opens the dedicated dialog to configure the manipulation pipeline."""
-        # Pass the current pipeline config and available data columns
-        dialog = ManipulationDialog(self.manipulation_pipeline, self.columns, self)
-        if dialog.exec_() == QDialog.Accepted:
-            self.manipulation_pipeline = dialog.get_pipeline()
-            # The result is grabbed in accept(), no signal needed.
 
     def accept(self):
         params = {
@@ -275,7 +280,6 @@ class PlotParamDialog(QDialog):
 
         shared_params = self.shared_options.get_params()
         params.update(shared_params)
-        params['manipulations'] = self.manipulation_pipeline
 
         if 'legend' not in params:
             params['legend'] = f"{params['y']} vs {params['x']}"
@@ -283,8 +287,10 @@ class PlotParamDialog(QDialog):
         self.paramsSelected.emit(params)
         super().accept()
 
+    def addTopText(self, text):
+        self.layout().insertWidget(0, QCompactTextEdit(text))
 
-class CalcPlotParamDialog(QDialog):
+class CalcPlotParamDialog(SmartDialog):
     """A dialog for plotting mathematical expressions of multiple columns."""
     paramsSelected = pyqtSignal(dict)
 
@@ -295,7 +301,6 @@ class CalcPlotParamDialog(QDialog):
         self.columns = columns
         self.variable_rows = []
         self.current_params = current_params or {}
-        self.manipulation_pipeline = self.current_params.get('manipulations', [])
         self.comments = comments or []
         self._init_ui()
 
@@ -343,13 +348,8 @@ class CalcPlotParamDialog(QDialog):
         main_layout.addWidget(expressions_group)
 
         # --- Shared Options ---
-        self.shared_options = _SharedPlotOptionsWidget(self.current_params)
+        self.shared_options = _SharedPlotOptionsWidget(self.current_params, self.columns, self)
         main_layout.addWidget(self.shared_options)
-
-        # --- Manipulation Pipeline Button ---
-        self.manip_button = QPushButton("Configure Manipulations...")
-        self.manip_button.clicked.connect(self._open_manipulation_dialog)
-        main_layout.addWidget(self.manip_button)
 
         # --- OK/Cancel Buttons ---
         button_layout = QHBoxLayout()
@@ -365,11 +365,6 @@ class CalcPlotParamDialog(QDialog):
         main_layout.setSizeConstraint(QLayout.SetFixedSize)
         self.setLayout(main_layout)
 
-    def _open_manipulation_dialog(self):
-        """Opens the dedicated dialog to configure the manipulation pipeline."""
-        dialog = ManipulationDialog(self.manipulation_pipeline, self.columns, self)
-        if dialog.exec_() == QDialog.Accepted:
-            self.manipulation_pipeline = dialog.get_pipeline()
 
     def add_variable_row(self):
         self._add_variable_row_with_data("", "")
@@ -435,10 +430,14 @@ class CalcPlotParamDialog(QDialog):
 
         shared_params = self.shared_options.get_params()
         params.update(shared_params)
-        params['manipulations'] = self.manipulation_pipeline
 
         if 'legend' not in params:
             params['legend'] = f"{y_expr} vs {x_expr}"
 
         self.paramsSelected.emit(params)
         super().accept()
+
+
+
+    def addTopText(self, text):
+        self.layout().insertWidget(0, QCompactTextEdit(text))

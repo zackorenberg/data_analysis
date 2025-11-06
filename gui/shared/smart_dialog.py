@@ -56,6 +56,10 @@ class SmartDialog(QDialog):
         # Adjust size when event loop is free
         QTimer.singleShot(0, self._adjustSizeAndPosition)
 
+    def layout(self):
+        """ Override layout selection so it returns same layout as setLayout() """
+        return self._user_layout
+
     def showEvent(self, event):
         super().showEvent(event)
         # Adjust size when event loop is free

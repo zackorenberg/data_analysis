@@ -424,6 +424,8 @@ class MainWindow(QMainWindow):
         return widget
 
     def handle_file_double_click(self, index, tree_type):
+        # TODO: GET INFO FROM DIALOG OBJECT INSTEAD OF paramsSelected SIGNAL!!! Don't add last_file_info until after dialog too
+        # Feature idea: SAVE PARAMS IN _last_file_info AS WELL SO IF THE USER SELECTS IT IT APPLIES LAST PARAMS
         if tree_type == 'raw':
             model = self.raw_model
         elif tree_type == 'pre':
@@ -444,10 +446,13 @@ class MainWindow(QMainWindow):
         columns = list(df.columns)
         self._last_file_info = {'comments': comments, 'meta': meta, 'filetype': ftype, 'file_path': file_path, 'df': df}
         dialog = PlotParamDialog(columns, parent=self, comments=comments)
+        dialog.addTopText(os.path.relpath(file_path, '.'))
         dialog.paramsSelected.connect(lambda params, fp=file_path, d=df: self.add_plot_line(fp, d, params, comments))
         dialog.exec_()
 
     def handle_file_plot_math(self, file_path): # Plots math
+        # TODO: GET INFO FROM DIALOG OBJECT INSTEAD OF paramsSelected SIGNAL!!! Don't add last_file_info until after dialog too
+        # Feature idea: SAVE PARAMS IN _last_file_info AS WELL SO IF THE USER SELECTS IT IT APPLIES LAST PARAMS
         if os.path.isdir(file_path):
             return
         try:
@@ -459,6 +464,7 @@ class MainWindow(QMainWindow):
         self._last_file_info = {'comments': comments, 'meta': meta, 'filetype': ftype, 'file_path': file_path, 'df': df}
 
         dialog = CalcPlotParamDialog(columns, parent=self, comments=comments)
+        dialog.addTopText(os.path.relpath(file_path, '.'))
         dialog.paramsSelected.connect(lambda params, fp=file_path, d=df: self.add_plot_line(fp, d, params, comments))
         dialog.exec_()
 
@@ -498,6 +504,7 @@ class MainWindow(QMainWindow):
         self.clear_status_message()
 
     def edit_line_params(self, idx):
+        # TODO: REFER TO COMMENTS FOR HANDLING DOUBLE CLICKS
         logger.debug(f"Editing line params idx={idx}")
         if 0 <= idx < len(self.plotted_lines):
             line_info = self.plotted_lines[idx]
@@ -519,6 +526,7 @@ class MainWindow(QMainWindow):
                 dialog = CalcPlotParamDialog(columns, parent=self, current_params=params, comments=comments)
             else:
                 dialog = PlotParamDialog(columns, current_params=params, parent=self, comments=comments)
+            dialog.addTopText(os.path.relpath(file_path, '.'))
             dialog.paramsSelected.connect(lambda new_params, fp=file_path, d=df, idx=idx: self.update_plot_line(fp, d, new_params, idx))
             dialog.exec_()
 
