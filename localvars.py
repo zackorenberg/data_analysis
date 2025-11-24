@@ -261,6 +261,8 @@ DATA_DELIMITER = '  '
 
 # Behaviour flags
 REREAD_DATAFILE_ON_EDIT = False
+MPL_USE_STYLE_BACKEND = True # This uses plt.style instead of rcparams
 
 # Any other constants can be added here
 """
+MPL_USE_STYLE_BACKEND = True # This uses plt.style instead of rcparams

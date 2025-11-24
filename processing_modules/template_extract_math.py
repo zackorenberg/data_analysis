@@ -14,10 +14,16 @@ PARAMETERS = [
         'fields': [
             ('colname', 'Column Name', 'dropdown_column', True),
             ('collabel', 'Column Label', str, False),
-            ('expression', 'Expression', str, False, 'e.g. "(x-100)/100" or "*100"')
-        ]
-    }, True),
-    ('test_%d', 'Test', str, True),
+            ('expression', 'Expression', str, False, 'e.g. "(x-100)/100" or "*100"'),
+            ('nested_%d', 'Nesting Test', {
+        'type': 'group',
+        'fields': [
+                ('colname', 'Column Name', 'dropdown_column', True),
+                ('collabel', 'Column Label', str, False),
+                ('expression', 'Expression', str, False, 'e.g. "(x-100)/100" or "*100"')
+            ]
+        }, False),]}, False),
+    ('test_%d', 'Test', str, False, 'placeholder'),
     ('prepend_date', 'Prepend Prefix', 'checkbox', False, True),
     ('file_name', 'File Name', str, True),
     ('output_folder', 'Subfolder Folder Name', str, False),
@@ -37,6 +43,9 @@ class ExtractColumnsWithMath(BaseProcessingModule):
     def process(self):
         logger.debug(f"Processing columns with math for file: {self.input_file}")
         col_entries = self.params.get('columns', [])
+
+        print(self.params)
+
         if not isinstance(col_entries, list):
             col_entries = [col_entries]
         result = pd.DataFrame()

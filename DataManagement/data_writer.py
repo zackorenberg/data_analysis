@@ -13,6 +13,8 @@ def save_data_file(df, filepath, comments=None, metadata=None):
     logger.debug(f"Saving data file: {filepath}")
     lines = []
     if comments:
+        if type(comments) == str:
+            comments = [c.strip() for c in comments.split("\n")]
         for c in comments:
             lines.append(f"# {c}" if not c.startswith('#') else c)
     if metadata and 'channels' in metadata:

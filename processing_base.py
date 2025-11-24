@@ -7,7 +7,8 @@ class BaseProcessingModule(ABC):
     """
     Abstract base class for all processing modules.
     """
-    PARAMETERS: List[Tuple[str, str, type, bool]] = []  # (name, label, type, required)
+    # If we define it here, they will all be blank. They must form this typing however
+    # PARAMETERS: List[Tuple[str, str, type, bool]] = []  # (name, label, type, required)
 
     def __init__(self, input_file: str, output_dir: str, params: dict):
         self.input_file = input_file
@@ -16,7 +17,7 @@ class BaseProcessingModule(ABC):
         self.data = None
         self.result = None
 
-    @abstractmethod
+    # @abstractmethod, we should probably not define this here, otherwise we are forced to overload it
     def load(self):
         """Load input data from file."""
         pass
@@ -24,12 +25,14 @@ class BaseProcessingModule(ABC):
     @abstractmethod
     def process(self):
         """Perform processing/calculation."""
-        pass
+        raise NotImplementedError("Subclasses must implement this method.")  # this code will never execute
 
     @abstractmethod
     def save(self):
         """Save processed data to output file."""
-        pass
+        raise NotImplementedError("Subclasses must implement this method.")  # this code will never execute
+
+    # Helper functions
 
     def get_cooldown_name(self):
         """Extract cooldown name as the first folder after 'raw', 'preprocessed', or 'postprocessed' in the input_file path."""
@@ -58,15 +61,3 @@ class BaseProcessingModule(ABC):
         os.makedirs(outdir, exist_ok=True)
         outpath = os.path.join(outdir, filename)
         save_data_file(df, outpath, comments=comments, metadata=metadata)
-
-class BasePreprocessingModule(BaseProcessingModule):
-    """
-    Base class for preprocessing modules.
-    """
-    pass
-
-class BasePostprocessingModule(BaseProcessingModule):
-    """
-    Base class for postprocessing modules.
-    """
-    pass 

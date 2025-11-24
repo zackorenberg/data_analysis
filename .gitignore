@@ -9,6 +9,12 @@ data/*
 # The settings directory should be configured by the user
 settings/*
 
+# Don't automatically upload user modules
+processing_modules/*.py
+plot_modules/*.py
+manipulation_modules/*.py
+
+
 # Data and settings specifics
 *.dat
 *.json
