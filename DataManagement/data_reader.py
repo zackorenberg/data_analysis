@@ -63,6 +63,10 @@ def read_raw_file(filepath):
             ncols = len(first_data_line.split())
         use_names = [str(name) for name in channel_names[:ncols]]
         if use_names:
+            if len(use_names) != ncols:
+                logger.warning("The number of header columns do not match the number of data columns! Columns will not be named:")
+                logger.warning(f"Number of data columns: {ncols}")
+                logger.warning(f"Column names read: {use_names}")
             df = pd.read_csv(filepath, comment='#', skiprows=data_start, sep=DATA_DELIMITER, names=use_names)
         else:
             df = pd.read_csv(filepath, comment='#', skiprows=data_start, sep=DATA_DELIMITER)
@@ -78,14 +82,20 @@ def read_processed_file(filepath):
         for i, line in enumerate(f):
             if not line.startswith('#'):
                 data_start = i
+                ncols = len(line.split(DATA_DELIMITER))
+                if ncols != len(header_cols):
+                    logger.warning("The number of header columns do not match the number of data columns! Columns will not be named:")
+                    logger.warning(f"Number of data columns: {ncols}")
+                    logger.warning(f"Column names read: {header_cols}")
+                    header_cols = []
                 break
             comments.append(line.strip())
             if line.startswith('#'): # The last line of the comments should conain the header labels
                 # Header columns (e.g. # 'T' 'B' 'R' 'U' 'V')
                 header_cols = re.findall(r"'([^']+)'", line) # If using quotes, this will work
                 if not len(header_cols): # If re could not match any quotes, we try without quotes
-                    header_cols = [x.strip('\'"') for x in line[1:].strip().split(DATA_DELIMITER if DATA_DELIMITER != '\s+' else ' ') if x]
-                
+                    header_cols = [x.strip('\'"') for x in line[1:].strip().split(DATA_DELIMITER if DATA_DELIMITER != '\s+' else ' ') if x.strip('\'"')]
+
     df = pd.read_csv(filepath, comment='#', skiprows=data_start, sep=DATA_DELIMITER, names=header_cols if header_cols else None)
     return df, comments, header_cols
 
