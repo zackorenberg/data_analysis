@@ -441,3 +441,27 @@ class CalcPlotParamDialog(SmartDialog):
 
     def addTopText(self, text):
         self.layout().insertWidget(0, QCompactTextEdit(text))
+
+
+
+def filterPlotParamsToRemember(params):
+    """
+    This is to filter certain parameters that we might not want to remember
+
+    This could be it's ownl submodule in settings, but for now just operate on whitelist/blacklist that can be modified here
+
+    :param params: Plot params object
+    :return: Filtered plot params object
+
+    NOTE: This is not considered memory safe (not deepcopied). While a new dict is defined, it should be treated
+    as modifications on the existing dict. TODO: Should I actually just modify existing dict? OR should I deepcopy? It does not appear to get modified anywhere in the code
+    """
+    WHITELIST_PARAMETERS = []
+    BLACKLIST_PARAMETERS = ['color']
+
+    if len(WHITELIST_PARAMETERS) > 0:
+        return {k:v for k,v in params.items() if k in WHITELIST_PARAMETERS}
+    elif len(BLACKLIST_PARAMETERS) > 0:
+        return {k:v for k,v in params.items() if k not in BLACKLIST_PARAMETERS}
+    else:
+        return params

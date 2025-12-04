@@ -7,7 +7,7 @@ from localvars import (
 import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QDialog
 from gui.mpl_canvas import MplCanvas
-from gui.plot_dialog import PlotParamDialog, CalcPlotParamDialog
+from gui.plot_dialog import PlotParamDialog, CalcPlotParamDialog, filterPlotParamsToRemember
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QFileSystemModel, QTabWidget, QAction, QFileDialog, QMenuBar, QListWidget, QListWidgetItem, QMessageBox, QDockWidget, QLabel, QSizePolicy, QPushButton, QInputDialog, QMenu)
 from PyQt5.QtCore import Qt
 import os
@@ -23,7 +23,7 @@ from logger import get_logger
 import logging
 from gui.processing_dialog import ProcessingDialog
 from gui.plot_module_widget import PlotModuleWidget
-from localvars import RAW_DATA_DIR, PREPROCESSED_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR, DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE, REREAD_DATAFILE_ON_EDIT, PROCESSING_MODULES_DIR
+from localvars import RAW_DATA_DIR, PREPROCESSED_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR, DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE, REREAD_DATAFILE_ON_EDIT, PROCESSING_MODULES_DIR, REMEMBER_LAST_PLOT_SETTINGS
 from gui.mpl_rcparams_widget import MplRcParamsWidget
 from gui.processing_dialog import ProcessingDialog
 from gui.plot_module_widget import PlotModuleWidget
@@ -313,6 +313,7 @@ class MainWindow(QMainWindow):
         # Store plot info
         self.plotted_lines = []  # List of dicts: {file, params, line}
         self.plot_modules = []  # List of active plot module instances
+        self.last_plot_params = None  # Last params object from most recent plotted line
 
         # Connect file tree double-clicks
         self.raw_tree.doubleClicked.connect(lambda idx: self.handle_file_double_click(idx, 'raw'))
@@ -467,7 +468,7 @@ class MainWindow(QMainWindow):
             return
         columns = list(df.columns)
         self._last_file_info = {'comments': comments, 'meta': meta, 'filetype': ftype, 'file_path': file_path, 'df': df}
-        dialog = PlotParamDialog(columns, parent=self, comments=comments)
+        dialog = PlotParamDialog(columns, parent=self, comments=comments, current_params=self.last_plot_params)
         dialog.addTopText(os.path.relpath(file_path, '.'))
         dialog.paramsSelected.connect(lambda params, fp=file_path, d=df: self.add_plot_line(fp, d, params, comments))
         dialog.exec_()
@@ -485,7 +486,7 @@ class MainWindow(QMainWindow):
         columns = list(df.columns)
         self._last_file_info = {'comments': comments, 'meta': meta, 'filetype': ftype, 'file_path': file_path, 'df': df}
 
-        dialog = CalcPlotParamDialog(columns, parent=self, comments=comments)
+        dialog = CalcPlotParamDialog(columns, parent=self, comments=comments, current_params=self.last_plot_params)
         dialog.addTopText(os.path.relpath(file_path, '.'))
         dialog.paramsSelected.connect(lambda params, fp=file_path, d=df: self.add_plot_line(fp, d, params, comments))
         dialog.exec_()
@@ -516,6 +517,8 @@ class MainWindow(QMainWindow):
         self.canvas.set_line_style_and_color(line, params)
 
         self.canvas.update_visuals(self.global_params, self.plot_modules)
+        if REMEMBER_LAST_PLOT_SETTINGS:
+            self.last_plot_params = filterPlotParamsToRemember(params)
         #self.canvas.apply_plot_params(self.global_params) # Reapply global params
         #self.canvas.figure.tight_layout()
         #self.canvas.draw()
@@ -583,6 +586,8 @@ class MainWindow(QMainWindow):
         self.canvas.axes.relim()
 
         self.canvas.update_visuals(self.global_params, self.plot_modules)
+        if REMEMBER_LAST_PLOT_SETTINGS:
+            self.last_plot_params = filterPlotParamsToRemember(params)
         #self.canvas.apply_plot_params(self.global_params)
         #self.canvas.figure.tight_layout()
         #self.canvas.draw()

@@ -13,6 +13,7 @@ DEFAULT_SETTINGS = {
     },
     "behavior_flags": {
         "reread_datafile_on_edit": False,
+        "remember_last_plot_settings": False,
     },
     "caching": {  # Renamed from plot_module_caching to be more general
         "plot_modules": {
@@ -49,6 +50,9 @@ SETTINGS_METADATA = {
     "data_dirs.plots": {"label": "Plots Output Directory", "type": "directory_path", "restart_required": True},
 
     "behavior_flags.reread_datafile_on_edit": {"label": "Re-read data file on edit (slower)", "type": "checkbox",
+                                               "restart_required": True},
+
+    "behavior_flags.remember_last_plot_settings": {"label": "Remember last-used plot parameters", "type": "checkbox",
                                                "restart_required": True},
 
     "caching.plot_modules.enable": {"label": "Enable caching of Plot Module configurations", "type": "checkbox",
@@ -175,6 +179,7 @@ PLOTS_DIR = _get_nested_value(_current_settings, ["data_dirs", "plots"])
 
 # Behavior flags
 REREAD_DATAFILE_ON_EDIT = _get_nested_value(_current_settings, ["behavior_flags", "reread_datafile_on_edit"])
+REMEMBER_LAST_PLOT_SETTINGS = _get_nested_value(_current_settings, ["behavior_flags", "remember_last_plot_settings"])
 
 # Caching settings (for direct use in mainapplication)
 # Note: These are specific to plot_modules caching, but the framework supports more.
@@ -185,6 +190,8 @@ PLOT_MODULE_CACHE_FILE = _get_nested_value(_current_settings, ["caching", "plot_
 DEFAULT_PLOT_CONFIG = _get_nested_value(_current_settings, ["default_plot_config_file"])
 DEFAULT_PLOT_SAVE = _get_nested_value(_current_settings, ["default_plot_save_path"])
 PROCESSING_MODULES_DIR = _get_nested_value(_current_settings, ["processing_modules_dir"])
+
+
 
 # Any other constants can be added here (if not configurable via settings)
 DATA_DELIMITER = '  '
@@ -202,7 +209,7 @@ def update_and_save_settings(new_settings_dict):
 
     # Re-populate global variables to reflect new settings immediately
     global RAW_DATA_DIR, PREPROCESSED_DATA_DIR, POSTPROCESSED_DATA_DIR, PLOTS_DIR
-    global REREAD_DATAFILE_ON_EDIT
+    global REREAD_DATAFILE_ON_EDIT, REMEMBER_LAST_PLOT_SETTINGS
     global PLOT_MODULE_CACHING_ENABLED, PLOT_MODULE_CACHE_FILE
     global DEFAULT_PLOT_CONFIG, DEFAULT_PLOT_SAVE, PROCESSING_MODULES_DIR
 
@@ -217,6 +224,8 @@ def update_and_save_settings(new_settings_dict):
     DEFAULT_PLOT_CONFIG = _get_nested_value(_current_settings, ["default_plot_config_file"])
     DEFAULT_PLOT_SAVE = _get_nested_value(_current_settings, ["default_plot_save_path"])
     PROCESSING_MODULES_DIR = _get_nested_value(_current_settings, ["processing_modules_dir"])
+    REMEMBER_LAST_PLOT_SETTINGS = _get_nested_value(_current_settings,
+                                                    ["behavior_flags", "remember_last_plot_settings"])
 
 
 def get_current_settings():
